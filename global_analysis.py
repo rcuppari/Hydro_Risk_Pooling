@@ -130,7 +130,7 @@ def get_dfs(country, country_geom, ds, hybas = 'country'):
 ## final for loop will use all of these in order
 ## start by getting countries of interest
 
-gen_data = id_hydro_countries(pct_gen = 99, year = 2015)
+gen_data = id_hydro_countries(pct_gen = 90, year = 2015)
 
 ##     import xarray 
 import xarray 
@@ -156,7 +156,7 @@ for country in gen_data['Country Name']:
           
     ## baby steps: start by using country level data, just as a proof of concept
     ## use the iso_a3 code to retrieve country geom, just to be standard 
-    iso_code = df.loc[:, 'iso_a3'][0]
+    iso_code = df['iso_a3'].iloc[0]
     country_geom = get_geom(iso_code)
 
     ## clean & clip data 
