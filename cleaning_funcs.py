@@ -374,7 +374,7 @@ def regs(outcome, input_gdf, country, detrending = False,
                     r2_mod = float(model.rsquared_adj)
                     print(r2_mod)
                     
-                    if r2_mod > threshold and pred_r2 > test_threshold: 
+                    if ((r2_mod > threshold) and (pred_r2 > test_threshold)): 
                         series = list(subset)
                         predicted_all = model.predict(x[list(subset)])
                         
@@ -382,8 +382,9 @@ def regs(outcome, input_gdf, country, detrending = False,
                         if plot == True: 
                             count += 1
                             r2_all = r2_calc(predicted_all, y)
-                            plot_reg(training, y_train, predicted, y_test, r2_all, country, count)
-                            
+                            try: 
+                                plot_reg(training, y_train, predicted, y_test, r2_all, country, count)
+                            except: print("Plotting failed")                        
                         new = {'inputs':[series], 'r2': r2_all, 'pval':[pval], 'test_r2': pred_r2} 
                         new = pd.DataFrame(new)
                         regression_output = pd.concat([regression_output, new], axis = 0)

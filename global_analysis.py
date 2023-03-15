@@ -113,8 +113,8 @@ def get_dfs(country, country_geom, ds, hybas = 'country'):
     ## 3) MODIS snow cover data 
     
     ## MODIS LST 
-#    modis_df = clean_modis_lst(country_geom, file_header = 'MOD11C3*.hdf')
-    modis_df = 'place holder'   
+    modis_df = clean_modis_lst(country_geom, file_header = 'MOD11C3*.hdf')
+#    modis_df = 'place holder'   
     ## IMERG 
     imerg_df = subset_imerg(country, country_geom, ds, hybas)
     
@@ -130,7 +130,7 @@ def get_dfs(country, country_geom, ds, hybas = 'country'):
 ## final for loop will use all of these in order
 ## start by getting countries of interest
 
-gen_data = id_hydro_countries(pct_gen = 90, year = 2015)
+gen_data = id_hydro_countries(pct_gen = 30, year = 2015)
 
 ##     import xarray 
 import xarray 
@@ -177,20 +177,20 @@ for country in gen_data['Country Name']:
     ## make sure to save for each country the top performing algorithm 
     gdf_grouped = group_data(input_gdf)
     
-    # if detrending == True: 
-    #     reg_det, reg_top_det = regs(det_data, gdf_grouped, country, year_pred = year_pred, detrending = True, 
-    #                                 threshold = 0.5)
-    #     results_det[country] = reg_det
-    #     results_top_det[country] = reg_top_det
+    if detrending == True: 
+        reg_det, reg_top_det = regs(det_data, gdf_grouped, country, year_pred = year_pred, detrending = True, 
+                                     threshold = 0.5)
+        results_det[country] = reg_det
+        results_top_det[country] = reg_top_det
 
-    # reg_all, reg_top = regs(clean_df, gdf_grouped, country, plot = True, threshold = 0.5)
+    reg_all, reg_top = regs(clean_df, gdf_grouped, country, plot = True, threshold = 0.5)
 
-    # results[country] = reg_all
-    # results_top[country] = reg_top
+    results[country] = reg_all
+    results_top[country] = reg_top
+
+    write_dict(results_top, str(country) + "_gen_top_results")
+    write_dict(results_top_det, str(country) + "_gen_top_results_det")
 
 write_dict(results, "gen_results") 
-write_dict(results_top, "gen_top_results")
-
 write_dict(results_det, "gen_results_det") 
-write_dict(results_top_det, "gen_top_results_det")
 
