@@ -16,9 +16,11 @@ import geopandas as gpd
 from shapely.geometry import mapping
 from cleaning_funcs import write_dict
 import numpy
+from geo_ref_dams import find_basins_in_country
 
 print('starting!')
-
+use_country_avg = False 
+hybas = 'country'
 ## start by identifying countries of interest
 ## want to save the generation data just for the countries
 ## with hydro generating more than a specified % 
@@ -29,7 +31,7 @@ def id_hydro_countries(pct_gen = 90, year = 2015):
     gen_data = pd.read_csv("Other_data/eia_hydropower_data.csv")
     country_conversion = pd.read_csv("Other_data/country_conversions.csv")
     
-    countries = wb_hydro[wb_hydro['2015'] > pct_gen][['Country Name', 'Country Code']] 
+    countries = wb_hydro[wb_hydro['2015'] >= pct_gen][['Country Name', 'Country Code']] 
     countries = countries.merge(country_conversion, on = 'Country Name')    
     countries = countries.rename(columns={'EIA Name':'Country'})
     
@@ -117,7 +119,7 @@ def get_dfs(country, country_geom, ds, hybas = 'country'):
 #    modis_df = 'place holder'   
     ## IMERG 
     imerg_df = subset_imerg(country, country_geom, ds, hybas)
-    
+#    imerg_df = 'place holder'   
     ## MODIS SNOW
     snow_df = clean_modis_snow(country_geom, file_header = 'MOD10CM*.hdf')
     
@@ -130,13 +132,13 @@ def get_dfs(country, country_geom, ds, hybas = 'country'):
 ## final for loop will use all of these in order
 ## start by getting countries of interest
 
-gen_data = id_hydro_countries(pct_gen = 30, year = 2015)
+gen_data = id_hydro_countries(pct_gen = 100, year = 2015)
 
 ##     import xarray 
 import xarray 
 import rioxarray 
 
-ds= xarray.open_mfdataset(paths = 'IMERG/imerge_file*.nc4', combine  = 'by_coords')
+ds = xarray.open_mfdataset(paths = 'IMERG/imerge_file*.nc4', combine  = 'by_coords')
 ds.rio.set_spatial_dims(x_dim = 'lon', y_dim = 'lat', inplace = True)
 ds.rio.write_crs("epsg:4326", inplace = True)
 
@@ -153,14 +155,24 @@ for country in gen_data['Country Name']:
     
     ## REMEMBER: if detrending == True, will need to retrend in final step
     det_data, clean_df, detrending, year_pred = remove_lin_trend(df)
-          
-    ## baby steps: start by using country level data, just as a proof of concept
-    ## use the iso_a3 code to retrieve country geom, just to be standard 
-    iso_code = df['iso_a3'].iloc[0]
+    
+    iso_code = df['iso_a3'].iloc[0]      
     country_geom = get_geom(iso_code)
+    
+    if use_country_avg == True: 
+        ## baby steps: start by using country level data, just as a proof of concept
+        ## use the iso_a3 code to retrieve country geom, just to be standard 
+        geom = country_geom 
 
+
+    else: ## use a subbasin/transboundary basin (HUZZAH!!!!!!!!!)
+        geom = find_basins_in_country(country_geom, hybas)
+        
     ## clean & clip data 
-    lst, imerg, snow = get_dfs(country, country_geom, ds, hybas = 'country')
+    ## changing this so that if hybas == 'country', then it will 
+    ## clip to the basin containing the country or unit of focus
+
+    lst, imerg, snow = get_dfs(country, geom, ds, hybas = 'country')
 
     ## coordinates are for some reason flipped... 
     import shapely

@@ -158,10 +158,9 @@ def clean_modis_snow(geom, file_header, hybas = 'country', country = '', subbasi
        
         ds = rxr.open_rasterio(name, masked = True)
         
-        if hybas == 'country': 
-           new_var3 = agg_data(geom = geom, ds = ds, var = 'Snow_Cover_Monthly_CMG', 
-                               hybas = hybas, time = time)
-        # else: 
+        new_var3 = agg_data(geom = geom, ds = ds, var = 'Snow_Cover_Monthly_CMG', 
+                           hybas = hybas, time = time)    
+
         #     if subbasin != '': 
         #         Hybas = gpd.read_file("Other_data/hybas_" + continent + "_lev01-12_v1c/hybas_" + continent + "_lev0" + str(hybas) + "_v1c.shp")
         #         sub = Hybas[Hybas['HYBAS_ID'] == subbasin]
