@@ -20,20 +20,70 @@ from itertools import chain, combinations
 import statsmodels.api as sm
 from sklearn.model_selection import train_test_split as tts
 import gc 
+from sklearn.ensemble import RandomForestRegressor as RFR
+
+
+def remove_lin_trend(input_data):  ## input data should have the year 
+    ## with the generation data, need to transpose so that the years are a 
+    ## column instead of a row     
+    df = input_data.T
+    df.reset_index(inplace = True)
+    ## drop the rows with the column names 
+    df = df.iloc[1:,:]
+    df.columns = ['year', 'outcome']
+
+    ## if there is no data (or data is equal to 0), drop 
+    ## nans will be dropped too 
+    df.iloc[:,1] = pd.to_numeric(df.iloc[:,1], errors = 'coerce')
+    df = df[df.iloc[:,1] > 0]
+    
+    ## get to the juicy part
+    y = pd.to_numeric(df.iloc[:,1]) ## outcome should be second column
+    X = sm.add_constant(pd.to_numeric(df.iloc[:, 0])) ## year should be first
+    
+    est_year = sm.OLS(y, X)
+    est_year2 = est_year.fit()
+#    print(est_year2.summary())
+#    print(est_year2.rsquared)
+
+    if est_year2.pvalues[1] < .05: 
+        year_pred = est_year2.predict(X)
+
+        det_data = pd.to_numeric(df.iloc[:,1]) - year_pred
+        print('detrending necessary')
+        detrending = True
+    else: 
+        det_data = df.iloc[:,1]
+        year_pred = 0
+        detrending = False
+    det_data = pd.DataFrame(det_data)
+    det_data['year'] = pd.to_numeric(df.iloc[:,0])
+    det_data.columns = ['outcome', 'year']
+    
+    df['year'] = pd.to_numeric(df['year'])
+    return det_data, df, detrending, year_pred
+
 
 ## clip precip to aoi, get precip, and make into df 
 def agg_data(geom, ds, hybas, var, time): ## geom is the bounds, variable is a string with var of interest
     
     new_var = ds.rio.clip(geom.geometry.apply(mapping), geom.crs, drop = False)
-        
-    new_var = new_var.to_dataframe()
+    #print(f"successfully clipped")
+    
+    try: 
+        new_var = new_var.to_dataframe()    
+    except: 
+        new_var = new_var.to_dataframe(name = 'dmsp')    
+  #  print(f"successfully converted to df")
+  #  print(new_var.head())
     new_var = new_var.dropna() 
     new_var.reset_index(inplace = True) 
 
 #    new_var['month'] = new_var.time.dt.month
 #    new_var['year'] = new_var.time.dt.year
     
-    if var == 'Snow_Cover_Monthly_CMG': 
+    if (var == 'Snow_Cover_Monthly_CMG') | (var == 'dmsp'): 
+        ## Snow cover & dmsp do not have pre-existing time variable 
         new_var['time'] = time
         #print(new_var)
         ## make into gpd df
@@ -48,36 +98,19 @@ def agg_data(geom, ds, hybas, var, time): ## geom is the bounds, variable is a s
             geometry = gpd.points_from_xy(new_var.lon, new_var.lat))
     ## data is already in monthly format, but want to get the mean for the aoi
     
+#    print(f"successfully made into var3")
+    
     agg_gdf = new_var3.dissolve(by = 'time')
-
+ #   print(f"successfully dissolved")
+    
+    
+#    agg_gdf.plot()
+#    plt.savefig("dmsp_test.png")
+    #plt.close() 
+    
     return agg_gdf
 
 
-
-## if you insert subbasin, will use hybas ID 
-def subset_imerg(country, geom, ds, continent = '', variable = 'precipitation', subbasin = '', hybas = 'country') : 
-
-    if hybas == 'country': 
-       output = agg_data(geom, ds, hybas, 'precipitation', time = '')
-    else: 
-        output = ''
-    #     if subbasin != '': 
-    #         Hybas = gpd.read_file("Other_data/hybas_" + continent + "_lev01-12_v1c/hybas_" + continent + "_lev0" + str(hybas) + "_v1c.shp")
-    #         sub = Hybas[Hybas['HYBAS_ID'] == subbasin]
-    #         output = agg_data(sub, ds, hybas, 'precipitation', time = '')
-
-    #     else: 
-    #         Hybas = gpd.read_file("Other_data/hybas_" + continent + "_lev01-12_v1c/hybas_" + continent + "_lev0" + str(hybas) + "_v1c.shp")
-    #         subs = Hybas.sjoin(country, how = 'inner')
-    #         subs_unique = subs['HYBAS_ID'].unique() 
-    
-    #         output = {}
-    #         for s in subs_unique:
-    #             print('sub #' + str(s))
-    #             geom_hybas = subs[subs['HYBAS_ID'] == s]
-    #             output[str(s)] = agg_data(geom_hybas, ds, hybas, 'precipitation', time = '')
-        
-    return output
 
 def get_geom(iso_code): 
     world_filepath = gpd.datasets.get_path('naturalearth_lowres')
@@ -161,24 +194,6 @@ def clean_modis_snow(geom, file_header, hybas = 'country', country = '', subbasi
         new_var3 = agg_data(geom = geom, ds = ds, var = 'Snow_Cover_Monthly_CMG', 
                            hybas = hybas, time = time)    
 
-        #     if subbasin != '': 
-        #         Hybas = gpd.read_file("Other_data/hybas_" + continent + "_lev01-12_v1c/hybas_" + continent + "_lev0" + str(hybas) + "_v1c.shp")
-        #         sub = Hybas[Hybas['HYBAS_ID'] == subbasin]
-        #         output = agg_data(sub, ds, hybas, time = time)
-
-        #     else: 
-        #         Hybas = gpd.read_file("Other_data/hybas_" + continent + "_lev01-12_v1c/hybas_" + continent + "_lev0" + str(hybas) + "_v1c.shp")
-        #         subs = Hybas.sjoin(country, how = 'inner')
-        #         subs_unique = subs['HYBAS_ID'].unique() 
-        
-        #         output = {}
-        #         for s in subs_unique:
-        #             print('sub #' + str(s))
-        #             geom_hybas = subs[subs['HYBAS_ID'] == s]
-        #             output[str(s)] = agg_data(geom_hybas, ds, hybas, time = time)
-                    
-        
-#        year1 = year ## keep track of last year 
         new_df = pd.concat([new_df, new_var3])
         
         year1 = year
@@ -199,41 +214,7 @@ def subset_modis(country_name, continent, subbasin = '', hybas = 3, variable = '
     else: ## MODIS LST  
         file_header = 'MOD11B3*.hdf' 
         new_var3, country = clean_modis_lst(country_name, file_header)      
-        
-    # Hybas = gpd.read_file("../hybas_" + continent + "_lev01-12_v1c/hybas_" + continent + "_lev0" + str(hybas) + "_v1c.shp")
-    
-    # if subbasin != '': 
-    #     sub = Hybas[Hybas['HYBAS_ID'] == subbasin][['HYBAS_ID', 'geometry']]        
-    #     sub_avg = sub.sjoin(new_var3, how = 'inner')
-    #     ## now should be able to groupby whilst preserving the subbasin geom
-    #     sub_avg2 = sub_avg.dissolve(by = ['HYBAS_ID', 'time'], aggfunc = {variable: 'max'})
-    
-
-    # else: 
-    #     subs = Hybas.sjoin(country, how = 'inner')
-    #     subs_unique = subs['HYBAS_ID'].unique() 
-    #     ## the subbasins that intersect with the country
-           
-    #     for s in subs_unique:
-    #         print('sub #' + str(s))
-    #         geom = subs[subs['HYBAS_ID'] == s][['HYBAS_ID', 'geometry']]
-            
-    #         sub_avg = geom.sjoin(new_var3, how = 'inner')
-    #         ## now should be able to groupby whilst preserving the subbasin geom
-    #         #sub_avg2 = sub_avg.dissolve(by = 'time', aggfunc = {variable: 'max'})
-            
-    #         ## if we use groupby instead of dissolve, we lose the geometry, but that is okay 
-    #         ## because we know the subbasin label 
-    #         sub_avg['month'] = sub_avg['time'].dt.month
-    #         sub_avg['year'] = sub_avg['time'].dt.year
-            
-    #         sub_avg2 = sub_avg.groupby(['month', 'year']).max()
-
-
-    #         print('sub #' + str(s) + ' max: ' + str(sub_avg2.max()))
-            
-    #         output[s] = sub_avg2
-        
+                
     country_avg = country.sjoin(new_var3, how = 'inner') 
     country_avg['month'] = country_avg['time'].dt.month
     country_avg['year'] = country_avg['time'].dt.year
@@ -252,6 +233,27 @@ def agg_country(new_var3, country):
     country_avg2 = country_avg.groupby(['month', 'year']).max()
     return country_avg2
 
+
+def clean_dmsp(geom, file_header, hybas): ## need country boundary geometry
+    ## need to have all MODIS files downloaded in directory
+    paths =  glob.glob("DMSP-VIIRS/Harmonized*.tif") 
+    new_df = pd.DataFrame()
+    
+    import rioxarray as rxr
+    
+    for name in paths: 
+        year = name[29:33]
+        time = pd.to_datetime(year)
+        print(f"DMSP year {time}")
+        print()
+        
+        ds = rxr.open_rasterio(name, masked = True) 
+        new_var3 = agg_data(geom = geom, ds = ds, var = 'dmsp', hybas = hybas, \
+                            time = time)
+        
+        new_df = pd.concat([new_df, new_var3])
+    
+    return new_df 
 
 ####################### run regressions ##############################
 def plot_reg(training, y_train, predicted, y_test, r2, country, count): 

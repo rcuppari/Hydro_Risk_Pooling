@@ -55,6 +55,8 @@ def max_dam_overlap(hybas, country_geom, relevant_hybas):
         grand = gpd.read_file("GRanD/GRanD_reservoirs_v1_3.shp")
         grand_hydro = grand[grand['USE_ELEC'] == 'Main']
         # grand_plot = grand_hydr.plot(column = 'DAM_HGT_M')
+
+        country_geom = gpd.GeoDataFrame(geometry = country_geom.geometry)
         
         points_in_hybas = gpd.tools.sjoin(grand_hydro, relevant_hybas, \
                                           predicate = 'within')
@@ -94,11 +96,11 @@ def find_basins_in_country(country_geom, hybas):
 
     if hybas == 'country': 
     ## for now, use size 3 to achieve goal 1
-        hybas_af = gpd.read_file("Other_data/hybas_af_lev01-12_v1c/hybas_af_lev04_v1c.shp")
-        hybas_sa = gpd.read_file("Other_data/hybas_sa_lev01-12_v1c/hybas_sa_lev04_v1c.shp")
-        hybas_na = gpd.read_file("Other_data/hybas_na_lev01-12_v1c/hybas_na_lev04_v1c.shp")
-        hybas_eu = gpd.read_file("Other_data/hybas_eu_lev01-12_v1c/hybas_eu_lev04_v1c.shp")
-        hybas_as = gpd.read_file("Other_data/hybas_as_lev01-12_v1c/hybas_as_lev04_v1c.shp")
+        hybas_af = gpd.read_file("Other_data/hybas_af_lev01-12_v1c/hybas_af_lev03_v1c.shp")
+        hybas_sa = gpd.read_file("Other_data/hybas_sa_lev01-12_v1c/hybas_sa_lev03_v1c.shp")
+        hybas_na = gpd.read_file("Other_data/hybas_na_lev01-12_v1c/hybas_na_lev03_v1c.shp")
+        hybas_eu = gpd.read_file("Other_data/hybas_eu_lev01-12_v1c/hybas_eu_lev03_v1c.shp")
+        hybas_as = gpd.read_file("Other_data/hybas_as_lev01-12_v1c/hybas_as_lev03_v1c.shp")
 
     else: 
         ## step 1: call hybas
