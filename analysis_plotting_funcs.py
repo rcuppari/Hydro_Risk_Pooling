@@ -9,6 +9,8 @@ import numpy as np
 import matplotlib.pyplot as plt 
 import math 
 import statsmodels.api as sm
+import geopandas as gpd
+from statsmodels.tsa.tsatools import lagmat
 
 from cleaning_funcs import id_hydro_countries
 from cleaning_funcs import regs
@@ -94,7 +96,6 @@ def make_scatters(predictions, gen_data2, r2, name = ''):
     axs[-1].set_xlabel("r2",fontsize = 14)
     fig.savefig(fname = f"Figures/indices{name}.jpg")
 
-
 def make_numeric(df): 
     for c in range(0, len(df.columns)): 
         df.iloc[:,c] = pd.to_numeric(df.iloc[:,c], errors = 'coerce')        
@@ -145,10 +146,12 @@ def detrend(gen_data):
     return det_gen, year_predictions
 
 ## for when I have the input csvs, but not the results
-def analysis_and_plot(hybas, hybas2, lag = False, title = '', plot_hydro = False,                       
+def analysis_and_plot(hybas, hybas2, countries, gen_data, cap_fac,
+                      lag = False, r_thresh = 0.4,
+                      title = '', plot_hydro = False,                       
                       pvals_all = False, snow = True, detrending = True, csv = False, 
                       num = 5): 
-    countries = id_hydro_countries(pct_gen = 25, year = 2015)
+    countries = id_hydro_countries(pct_gen = 25, year = 2015, cap_fac = cap_fac)
 
     gen_data = countries.T
     gen_data.reset_index(inplace = True)
@@ -185,6 +188,7 @@ def analysis_and_plot(hybas, hybas2, lag = False, title = '', plot_hydro = False
                 evi['year'] = pd.to_datetime(evi['time']).dt.year
                 new = new.merge(evi[['EVI', 'year']], on = 'year')
             except: pass
+        
             if snow == False:
                 new = new.loc[:,~new.columns.str.contains('Snow', case=False)] 
              
@@ -346,26 +350,32 @@ def analysis_and_plot(hybas, hybas2, lag = False, title = '', plot_hydro = False
     failed = gpd.GeoDataFrame(failed)
     
     if plot_hydro == True: 
-        fig, (ax1, ax2) = plt.subplots(ncols=1, nrows = 2, figsize=(15, 15), sharex=True, sharey=True)
+            fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
+                            figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+            fig.set_title('r2 for Generation Index, ' + hybas, fontsize=14)
+            
+            failed.plot(ax = fig, column = 'r2', figsize = (25,20), color = 'red', alpha = 0.7)
         
-        hydro_gdf.plot(ax = ax1, column='2015', missing_kwds={'color': 'lightgrey'},
-                   figsize = (25, 20), cmap = 'YlGnBu', legend = True)
-        ax1.set_title('Percent Generation From Hydropower',fontsize=14)
+        # fig, (ax1, ax2) = plt.subplots(ncols=1, nrows = 2, figsize=(15, 15), sharex=True, sharey=True)
+        
+        # hydro_gdf.plot(ax = ax1, column='2015', missing_kwds={'color': 'lightgrey'},
+        #            figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+        # ax1.set_title('Percent Generation From Hydropower',fontsize=14)
         
         
-        merged_gdf.plot(ax = ax2, column = 'r2', missing_kwds={'color':'lightgrey'}, 
-                        figsize = (25, 20), cmap = 'YlGnBu', legend = True)
-        ax2.set_title('r2 for Generation Index, ' + hybas, fontsize=14)
+        # merged_gdf.plot(ax = ax2, column = 'r2', missing_kwds={'color':'lightgrey'}, 
+        #                 figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+        # ax2.set_title('r2 for Generation Index, ' + hybas, fontsize=14)
         
-        failed.plot(ax = ax2, column = 'r2', figsize = (25,20), color = 'red', alpha = 0.7)
+        # failed.plot(ax = ax2, column = 'r2', figsize = (25,20), color = 'red', alpha = 0.7)
 
-    else:     
+    # else:     
         
-        fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
-                        figsize = (25, 20), cmap = 'YlGnBu', legend = True)
-        fig.set_title('r2 for Generation Index, ' + hybas, fontsize=14)
+    #     fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
+    #                     figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+    #     fig.set_title('r2 for Generation Index, ' + hybas, fontsize=14)
         
-        failed.plot(ax = fig, column = 'r2', figsize = (25,20), color = 'red', alpha = 0.7)
+    #     failed.plot(ax = fig, column = 'r2', figsize = (25,20), color = 'red', alpha = 0.7)
     
     regs_top['df'] = hybas2
     
