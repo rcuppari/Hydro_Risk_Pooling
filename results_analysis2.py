@@ -34,7 +34,7 @@ detrending = False
 loading_factor = 1.3
 strike_val = 25
 r_thresh = 0.3
-pvals = 0.4
+pvals = 0.06
 cap_fac = True
 
 ## first things first, let's see what the correlations are between countries
@@ -62,21 +62,22 @@ else:
 
 ## just decide reference point to which everything should be correlated, and plot: 
     ## global sum or mean capacity factor 
+    ## doesn't work very well for capacity factor in my opinion though -- changing to sum again
 if detrending == True: 
 
-    if cap_fac == True:   
-        det_gen['sum'] = det_gen.loc[:,'Albania':].mean(axis = 1)
-    else: 
-        det_gen['sum'] = det_gen.loc[:,'Albania':].sum(axis = 1)
+#    if cap_fac == True:   
+#        det_gen['sum'] = det_gen.loc[:,'Albania':].median(axis = 1)
+#    else: 
+    det_gen['sum'] = det_gen.loc[:,'Albania':].sum(axis = 1)
 
     corrs = pd.DataFrame(det_gen.corr().loc['Albania':, 'sum'])
     corrs.reset_index(inplace = True)
     
 else:    
-    if cap_fac == True:   
-        gen_data['sum'] = gen_data.loc[:,'Albania':].mean(axis = 1)
-    else: 
-        gen_data['sum'] = gen_data.loc[:,'Albania':].sum(axis = 1)
+#    if cap_fac == True:   
+#        gen_data['sum'] = gen_data.loc[:,'Albania':].median(axis = 1)
+#    else: 
+    gen_data['sum'] = gen_data.loc[:,'Albania':].sum(axis = 1)
         
     corrs = pd.DataFrame(gen_data.corr().loc['Albania':,'sum'])
     corrs.reset_index(inplace = True)
@@ -119,7 +120,7 @@ print('reg 4')
 reg_tps, reg_tps_top, rel_tps = analysis_and_plot("watersheds", hybas2 = 'watersheds', 
                                         gen_data = gen_data, countries = countries,
                                         lag = False, cap_fac = cap_fac, 
-                                        pvals_all = 0.05, r_thresh = r_thresh, 
+                                        pvals_all = pvals, r_thresh = r_thresh, 
                                         detrending = detrending, num = 4)
 print('reg tps')
 
@@ -129,10 +130,13 @@ reg_4_lag, reg_top_4_lag, reg_4_lag2 = analysis_and_plot("watersheds", hybas2 = 
                                         title = 'hybas 4 with lags', num = 4, cap_fac = cap_fac,
                                         detrending = detrending, r_thresh = r_thresh)
 #print('reg 4 lag')
-#reg_sheds, reg_sheds_top = read_results("watersheds_TPS", lag = False)
-#print('reg sheds')
 
-reg_sheds21, reg_sheds_top2 = read_results("watersheds_TPS", lag = 1)
+reg_sheds, reg_sheds_top = read_results("watersheds_TPS", gen_data = gen_data, 
+                                        countries = countries, lag = False)
+print('reg sheds')
+
+reg_sheds21, reg_sheds_top2 = read_results("watersheds_TPS", gen_data = gen_data, 
+                                        countries = countries, lag = 1)
 print('reg sheds21')
 
 reg_sheds2, reg_sheds2_top, rel_sheds2  = analysis_and_plot("watersheds2", cap_fac = cap_fac, 
@@ -285,8 +289,8 @@ reg_top_4_lag = clean_pvals(reg_top_4_lag)
 
 reg_top_4 = reg_top_4.rename(columns = {'Country Name':'country'})
 reg_top_avg = reg_top_avg.rename(columns = {'Country Name':'country'})
-#reg_sheds_top = reg_sheds_top.rename(columns = {'Country Name':'country'})
-#reg_tps_top = reg_sheds_top.rename(columns = {'Country Name':'country'})
+reg_sheds_top = reg_sheds_top.rename(columns = {'Country Name':'country'})
+reg_tps_top = reg_sheds_top.rename(columns = {'Country Name':'country'})
 reg_sheds2_top = reg_sheds2_top.rename(columns = {'Country Name':'country'})
 reg_sheds3_top = reg_sheds3_top.rename(columns = {'Country Name':'country'})
 reg_top_avg_lag = reg_top_avg_lag.rename(columns = {'Country Name':'country'})
@@ -295,8 +299,8 @@ reg_sheds_top2 = reg_sheds2_top.rename(columns = {'Country Name':'country'})
 
 # this should be automatic with the updated version of the function
 reg_top_avg['df'] = 'country_avg'
-#reg_sheds_top['df'] = 'watersheds_TPS'
-#reg_tps_top['df'] = 'watersheds'
+reg_sheds_top['df'] = 'watersheds_TPS'
+reg_tps_top['df'] = 'watersheds'
 reg_sheds3_top['df'] = 'watersheds_all'
 reg_sheds2_top['df'] = 'watersheds2'
 reg_sheds_top2['df'] = 'watersheds22'
@@ -333,7 +337,7 @@ merged_gdf = hydro_gdf.merge(all_sig, on = 'Country Name', how = 'outer')
 merged_gdf = merged_gdf.merge(corrs, on = 'Country Name', how = 'outer')
 
 # fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
-#                 cmap = 'YlGnBu', legend = True)
+#                 cmap = 'PuOr', legend = True)
 # fig.set_title('Significant Regression Results', fontsize=14)
 # plt.tight_layout(h_pad=1)
 
@@ -433,8 +437,9 @@ for r, country in enumerate(all_sig['Country Name']):
     
         reg_inputs = reg_inputs.split(",")
 
-    predictions = pd.concat([predictions, predict_countries(country, hybas, reg_inputs)],
-                            axis = 1)
+    predictions = pd.concat([predictions, 
+                             predict_countries(country, hybas, country_gen, reg_inputs)],
+                             axis = 1)
 
 #predictions.to_csv("predictions_det.csv")
 
@@ -450,13 +455,13 @@ for c in predictions.columns:
     
 
 ## hard to fit more than 8 on one page (to work on later)
-make_scatters(predictions.iloc[:,:8], name = 'pred1')
-make_scatters(predictions.iloc[:,8:16], name = 'pred2')
-make_scatters(predictions.iloc[:,16:], name = 'pred3')
+make_scatters(predictions.iloc[:,:8], gen_data2, r2 = r2, name = 'pred1')
+make_scatters(predictions.iloc[:,8:16], gen_data2, r2 = r2, name = 'pred2')
+make_scatters(predictions.iloc[:,16:], gen_data2, r2 = r2, name = 'pred3')
 
 ## take the top 8 
 top_eight = all_sig.sort_values(by = 'r2', ascending = False)['Country Name'].iloc[:8]
-make_scatters(predictions[top_eight.values], name = 'tops')
+make_scatters(predictions[top_eight.values], gen_data2, r2, name = 'tops')
 
 ## should set the strike as some percentile of flow? Maybe 20%? 
 ## drop the -99
