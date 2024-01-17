@@ -20,7 +20,109 @@ from itertools import chain, combinations
 import statsmodels.api as sm
 from sklearn.model_selection import train_test_split as tts
 import gc 
-from sklearn.ensemble import RandomForestRegressor as RFR
+import shapely 
+
+   
+def id_hydro_countries(pct_gen = 90, year = 2015, cap_fac = False):
+    wb_hydro = pd.read_csv("Other_data/wb_hydro%.csv")
+    country_conversion = pd.read_csv("Other_data/country_conversions.csv")
+    
+    countries = wb_hydro[wb_hydro['2015'] >= pct_gen][['Country Name', 'Country Code']] 
+    countries = countries.merge(country_conversion, on = 'Country Name')    
+    countries = countries.rename(columns={'EIA Name':'Country'})
+
+    gen_data = pd.read_csv("Other_data/eia_hydropower_data.csv")
+    ## remove spaces from gen data country names to make consistent
+    gen_data.iloc[:,0] = gen_data.iloc[:,0].str.lstrip()
+    gen_data = gen_data.rename(columns = {'hydroelectricity net generation (billion kWh)': 'Country'})
+    
+    ## keep generation for countries with high hydro 
+    gen_data2 = gen_data[gen_data.iloc[:,0].isin(countries['Country'])]
+
+    gen_data3 = gen_data2.merge(countries, on = 'Country')
+
+    if cap_fac == False:        
+        return gen_data3
+    
+    else: 
+        cap_data = pd.read_csv("Other_data/IRENA_global_hydro_stats2.csv", skiprows = 7)
+        cap_data.fillna(method='ffill', inplace = True)
+        cap_data.iloc[:,3:] = cap_data.iloc[:, 3:].applymap(lambda x: str(x).replace(",", ""))
+        cap_data.iloc[:,3:] = cap_data.iloc[:, 3:].applymap(lambda x: str(x).replace(" ", ""))
+        cap_data.iloc[:,3:] = cap_data.iloc[:, 3:].applymap(lambda x: str(x).replace("inf", "NaN"))
+
+        ## IRENA is missing the generation data for 2020, which is weird, so will use EIA here 
+
+        ## get right country names
+        cap_data = cap_data.merge(countries, left_on = 'Country/area', right_on = 'Country')
+        
+        ## convert cap_data to kW to match gen data
+        ## note: billion kWh = 1,000,000,000 = 1M MWh = 1000 GWh
+        cap_data = cap_data[cap_data['Indicator'] == 'Electricity capacity (MW)']
+#        cap_data = cap_data.loc[cap_data['Country/area'].isin(gen_data2['Country']),:]
+        
+        cap_factor_df = pd.DataFrame(index = gen_data3.iso_a3, 
+                                     columns = cap_data.columns[3:-5])
+        
+        for c in cap_data.columns[3:-5]:
+            cap_data.loc[:,c] = pd.to_numeric(cap_data.loc[:,c], errors = 'coerce')
+            ## put capacity into B kWh from MW, to match the generation data 
+            cap_data.loc[:,c] = (cap_data.loc[:, c]/1000)/1000*8760 
+            #cap_data.loc[:,c] = cap_data[c].replace(0, 0.01)
+        
+            gen_data3.loc[:,c] = pd.to_numeric(gen_data3.loc[:,c], errors = 'coerce')
+            #gen_data.loc[:,c] = gen_data[c].replace(0, 0.01)
+
+            for r in gen_data3.iso_a3:
+ #               print(r)
+                country_gen = gen_data3[gen_data3['iso_a3'] == r][c]
+                country_cap = cap_data[cap_data['iso_a3'] == r][c]
+                
+                try: 
+                    cap_factor_df.loc[r,c] = (country_gen.values/country_cap.values)[0]
+                except: 
+                    cap_factor_df.loc[r,c] = 'NaN'
+            
+            ## I know this is awfully clumsy, but I am not sure why it is not working otherwise
+            cap_factor_df[c] = pd.to_numeric(cap_factor_df[c], errors = 'coerce')
+
+        cap_factor_df.reset_index(inplace = True)
+        
+        cap_factor_df = cap_factor_df.merge(countries, on = 'iso_a3')
+        
+        cols = gen_data3.columns
+        drop = ['1980', '1981', '1982', '1983', '1984', '1985', '1986', '1987', '1988', '1989', '1990', '1991', '1992', '1993', '1994', '1995', '1996', '1997', '1998', '1999']
+        cols = [col for col in gen_data3.columns if col not in drop]
+        
+        cap_df = cap_factor_df[cols] 
+        
+        return cap_df
+
+def get_dfs(country, country_geom, ds, hybas = 'country', 
+            snow_inc = True):
+    ## need to import 
+    ## 1) MODIS LST
+    ## 2) IMERG precip
+    ## 3) MODIS snow cover 
+    ## 4) MODIS EVI 
+
+    ## want to save the dfs for all of the individual hydro units, as averages
+    ## if watersheds == True 
+        
+    ## MODIS LST 
+    modis_df = clean_modis_lst(country_geom, file_header = 'MOD11C3*.hdf', hybas = hybas)
+        
+    ## IMERG 
+    imerg_df = agg_data(country_geom, ds, hybas, 'precipitation', time = '')
+        
+    ## MODIS SNOW
+    snow_df = clean_modis_snow(country_geom, file_header = 'MOD10CM*.hdf', hybas = hybas)
+    
+    ## MODIS EVI/NDVI
+    #evi_df, ndvi_df = clean_modis_evi(country_geom, file_header = 'MOD13C2*.hdf', hybas = hybas)
+    evi_df = clean_modis_evi(country_geom, file_header = 'MOD13C2*.hdf', hybas = hybas)
+    
+    return modis_df, imerg_df, snow_df, evi_df#, ndvi_df
 
 
 def remove_lin_trend(input_data):  ## input data should have the year 
@@ -63,54 +165,79 @@ def remove_lin_trend(input_data):  ## input data should have the year
     df['year'] = pd.to_numeric(df['year'])
     return det_data, df, detrending, year_pred
 
-
 ## clip precip to aoi, get precip, and make into df 
 def agg_data(geom, ds, hybas, var, time): ## geom is the bounds, variable is a string with var of interest
-    
-    new_var = ds.rio.clip(geom.geometry.apply(mapping), geom.crs, drop = False)
-    #print(f"successfully clipped")
-    
-    try: 
-        new_var = new_var.to_dataframe()    
-    except: 
-        new_var = new_var.to_dataframe(name = 'dmsp')    
-  #  print(f"successfully converted to df")
-  #  print(new_var.head())
-    new_var = new_var.dropna() 
-    new_var.reset_index(inplace = True) 
 
-#    new_var['month'] = new_var.time.dt.month
-#    new_var['year'] = new_var.time.dt.year
+    if hybas == 'watersheds':    
+        
+        for g in np.arange(len(geom)): 
+            print(g)    
+            geom2 = gpd.GeoSeries(geom.iloc[g,-1])
+            name = geom['HYBAS_ID'].iloc[g]
+            
+            new_sub_var = ds.rio.clip(geom2.geometry.apply(mapping), geom.crs, drop = False) 
+            
+            new_sub_var = new_sub_var.to_dataframe()
+            new_sub_var = new_sub_var.dropna() 
+            new_sub_var.reset_index(inplace = True) 
+            
+            if (var == 'Snow_Cover_Monthly_CMG') | (var == 'dmsp') | (var == 'CMG 0.05 Deg Monthly EVI') | (var == 'CMG 0.05 Deg Monthly NDVI'):  
+                new_sub_var['time'] = time
+                #print(new_var)
+                ## make into gpd df
+                new_var3 = gpd.GeoDataFrame(
+                    new_sub_var[['time', var]], 
+                    geometry = gpd.points_from_xy(new_sub_var.y, new_sub_var.x))
     
-    if (var == 'Snow_Cover_Monthly_CMG') | (var == 'dmsp'): 
-        ## Snow cover & dmsp do not have pre-existing time variable 
-        new_var['time'] = time
-        #print(new_var)
-        ## make into gpd df
-        new_var3 = gpd.GeoDataFrame(
-            new_var[['time', var]], 
-            geometry = gpd.points_from_xy(new_var.y, new_var.x))
-
+            else: 
+                ## make into gpd df
+                new_var3 = gpd.GeoDataFrame(
+                    new_sub_var[['time', var]], 
+                    geometry = gpd.points_from_xy(new_sub_var.lon, new_sub_var.lat))
+            ## data is already in monthly format, but want to get the mean for the aoi
+            
+            ## COMBINE -- keep index as time, but place geometry with hybas ID in name 
+            ## had kept the geometry to unite all points within a certain geometry and then group by time
+            new_sub_var2 = pd.DataFrame(new_var3.dissolve(by = 'time')[var])            
+            new_sub_var2.columns = [f"{var[:6]}_{name}"]
+            
+            if g == 0: 
+                sub_vars = new_sub_var2
+            else: 
+                sub_vars = sub_vars.merge(new_sub_var2, left_index = True, right_index = True)
+        return sub_vars 
+    
     else: 
-        ## make into gpd df
-        new_var3 = gpd.GeoDataFrame(
-            new_var[['time', var]], 
-            geometry = gpd.points_from_xy(new_var.lon, new_var.lat))
-    ## data is already in monthly format, but want to get the mean for the aoi
+#        name = str(geom.iloc[0,0])
+        new_var = ds.rio.clip(geom.geometry.apply(mapping), geom.crs, drop = False)
+            
+        new_var = new_var.to_dataframe()
+        new_var = new_var.dropna() 
+        new_var.reset_index(inplace = True) 
     
-#    print(f"successfully made into var3")
+        #    new_var['month'] = new_var.time.dt.month
+        #    new_var['year'] = new_var.time.dt.year
+        
+        if (var == 'Snow_Cover_Monthly_CMG') | (var == 'dmsp') | (var == 'CMG 0.05 Deg Monthly EVI') | (var == 'CMG 0.05 Deg Monthly NDVI'):  
+            new_var['time'] = time
+            #print(new_var)
+            ## make into gpd df
+            new_var3 = gpd.GeoDataFrame(
+                new_var[['time', var]], 
+                geometry = gpd.points_from_xy(new_var.y, new_var.x))
     
-    agg_gdf = new_var3.dissolve(by = 'time')
- #   print(f"successfully dissolved")
-    
-    
-#    agg_gdf.plot()
-#    plt.savefig("dmsp_test.png")
-    #plt.close() 
-    
-    return agg_gdf
-
-
+        else: 
+            ## make into gpd df
+            new_var3 = gpd.GeoDataFrame(
+                new_var[['time', var]], 
+                geometry = gpd.points_from_xy(new_var.lon, new_var.lat))
+        ## data is already in monthly format, but want to get the mean for the aoi
+        
+        agg_gdf = pd.DataFrame(new_var3.dissolve(by = 'time')[var])
+#        agg_gdf.columns = [f"{var[:6]}_{name}"]
+        agg_gdf.columns = [f"{var[:6]}"]
+        
+        return agg_gdf
 
 def get_geom(iso_code): 
     world_filepath = gpd.datasets.get_path('naturalearth_lowres')
@@ -120,7 +247,7 @@ def get_geom(iso_code):
     geom = country_bounds.geometry   
     return geom
 
-def clean_modis_lst(geom, file_header): ## need country boundary geometry
+def clean_modis_lst(geom, file_header, hybas): ## need country boundary geometry
     ## need to have all MODIS files downloaded in directory
     urls = pd.read_csv("MOD_LST2/urls.txt", sep = '/', header = None).iloc[:,7:]
     urls.columns = ['time', 'name'] 
@@ -128,15 +255,15 @@ def clean_modis_lst(geom, file_header): ## need country boundary geometry
 #    paths =  glob.glob('MOD_LST2/' + file_header) 
 
     agg_gdf = gpd.GeoDataFrame() ## initialize df to store final combined modis data
-    new_df = gpd.GeoDataFrame() ## initialize df to store iteration of modis data
+
     import rioxarray as rxr
 
     for name in urls['name']: ### will read and clean them all one at a time and then convert 
         ## can use the list of urls to identify year-month 
         ## thankfully reading in with '/' does half the work! 
-        print(name)
+        #print(name)
         time = urls[urls['name'] == name].iloc[0,0]
-        print(time)
+        #print(time)
         
         try: 
             ds = rxr.open_rasterio("MOD_LST2/" + name, masked = True)
@@ -159,9 +286,11 @@ def clean_modis_lst(geom, file_header): ## need country boundary geometry
             agg_gdf = pd.concat([agg_gdf, new_var1])
             
             gc.collect()
-        except: print('failed to read ' + str(name))
+            
+        except: pass #print('failed to read  MODIS LST ' + str(name))
         ## data is already in monthly format, but want to get the mean for each 
         ## subbasin of interest 
+        
     return agg_gdf ## this will be a geodataframe with geometry and will hold the whole modis timeseries       
 
 def clean_modis_snow(geom, file_header, hybas = 'country', country = '', subbasin = '', continent = ''):
@@ -193,68 +322,78 @@ def clean_modis_snow(geom, file_header, hybas = 'country', country = '', subbasi
         
         new_var3 = agg_data(geom = geom, ds = ds, var = 'Snow_Cover_Monthly_CMG', 
                            hybas = hybas, time = time)    
-
+                    
+        
+#        year1 = year ## keep track of last year 
         new_df = pd.concat([new_df, new_var3])
         
         year1 = year
     
-        ## data is already in monthly format, but want to get the mean for each 
-        ## subbasin of interest 
+    ## coordinates are for some reason flipped...    
+#    new_df['geometry'] = gpd.GeoSeries(new_df['geometry']).map(lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
+        
     return new_df## this will be a geodataframe with geometry and will hold the whole modis timeseries       
 
-
-def subset_modis(country_name, continent, subbasin = '', hybas = 3, variable = 'Snow_Cover_Monthly_CMG'):
-    output = {} ## dictionary that will hold values for all of the subbasins
-
-    #import rioxarray as rxr
-    if variable == 'Snow_Cover_Monthly_CMG': ## MODIS SNOW
-        file_header = 'MOD10CM*.hdf'
-        new_var3, country = clean_modis_snow(country_name, file_header)      
-        
-    else: ## MODIS LST  
-        file_header = 'MOD11B3*.hdf' 
-        new_var3, country = clean_modis_lst(country_name, file_header)      
-                
-    country_avg = country.sjoin(new_var3, how = 'inner') 
-    country_avg['month'] = country_avg['time'].dt.month
-    country_avg['year'] = country_avg['time'].dt.year
-    
-    country_avg2 = country_avg.groupby(['month', 'year']).max()
-    
-    output['country_avg'] = country_avg2 
-    return output
-
-
-def agg_country(new_var3, country):
-    country_avg = country.sjoin(new_var3, how = 'inner') 
-    country_avg['month'] = country_avg['time'].dt.month
-    country_avg['year'] = country_avg['time'].dt.year
-    
-    country_avg2 = country_avg.groupby(['month', 'year']).max()
-    return country_avg2
-
-
-def clean_dmsp(geom, file_header, hybas): ## need country boundary geometry
+def clean_modis_evi(geom, file_header, hybas = 'country'): ## need country boundary geometry
     ## need to have all MODIS files downloaded in directory
-    paths =  glob.glob("DMSP-VIIRS/Harmonized*.tif") 
-    new_df = pd.DataFrame()
-    
-    import rioxarray as rxr
-    
-    for name in paths: 
-        year = name[29:33]
-        time = pd.to_datetime(year)
-        print(f"DMSP year {time}")
-        print()
-        
-        ds = rxr.open_rasterio(name, masked = True) 
-        new_var3 = agg_data(geom = geom, ds = ds, var = 'dmsp', hybas = hybas, \
-                            time = time)
-        
-        new_df = pd.concat([new_df, new_var3])
-    
-    return new_df 
 
+     file_header = 'MOD_EVI/' + file_header
+     paths =  glob.glob(file_header) 
+     paths = sorted(paths) ## sort so that it is oldest to newest
+     count = 1
+     year1 = paths[1][17:21] ## extract first year 
+     
+     
+     evi_df = pd.DataFrame() ## initialize df to store final combined modis data
+ #    ndvi_df = pd.DataFrame() ## initialize df to store final combined modis data
+     
+     import rioxarray as rxr
+    
+     for n, name in enumerate(paths): ### will read and clean them all one at a time and then convert 
+         year = name[17:21]
+         if year == year1: 
+             count += 1 
+         else: 
+             count = 1
+             
+         print(name)
+         print(year)
+         time = pd.to_datetime(year + '-' + str(count))
+         print(time)
+         print()    
+      
+         try: 
+             ds = rxr.open_rasterio(name, masked = True)
+ 
+            
+             new_evi3 = agg_data(geom = geom, ds = ds, var = 'CMG 0.05 Deg Monthly EVI', 
+                               hybas = hybas, time = time)    
+             new_evi3.columns = ['EVI']
+             evi_df = pd.concat([evi_df, new_evi3])
+             gc.collect()
+            
+            # print('evi saved')
+             
+            #  new_ndvi3 = agg_data(geom = geom, ds = ds, var = 'CMG 0.05 Deg Monthly NDVI', 
+            #                    hybas = hybas, time = time)    
+            #  new_ndvi3.columns = ['NDVI']
+             
+            #  ndvi_df = pd.concat([ndvi_df, new_ndvi3])
+            #  gc.collect()
+            # # print('ndvi saved')
+        
+            ## coordinates are for some reason flipped... 
+    #     new_df['geometry'] = gpd.GeoSeries(new_df['geometry']).map(lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
+        
+         except: print('failed to read MODIS NDVI ' + str(name))
+         
+         year1 = year
+         ## data is already in monthly format, but want to get the mean for each 
+         ## subbasin of interest 
+         return evi_df#, ndvi_df ## this will be a geodataframe with geometry and will hold the whole m
+
+     
+ 
 ####################### run regressions ##############################
 def plot_reg(training, y_train, predicted, y_test, r2, country, count): 
     val_x = training.mean()
@@ -273,15 +412,19 @@ def plot_reg(training, y_train, predicted, y_test, r2, country, count):
 
 ## gdf should have a time column ('time') that is at least monthly
 def group_data(gdf): 
-    spri_mons = [3,4,5]
-    summ_mons = [6,7,8]
-    wint_mons = [12,1,2]
-    fall_mons = [9,10,11]
-    
     gdf['time'] = pd.to_datetime(gdf['time'])
     gdf['month'] = gdf.time.dt.month    
     gdf['year'] = gdf.time.dt.year    
         
+    ## aggregate annually 
+    gdf_ann = gdf.groupby('year').mean()
+
+    ## and then seasonally  
+    spri_mons = [3,4,5]
+    summ_mons = [6,7,8]
+    wint_mons = [12,1,2]
+    fall_mons = [9,10,11]
+
     isin_spring = gdf['month'].isin(spri_mons)
     spring = gdf.loc[isin_spring]
         
@@ -310,18 +453,69 @@ def group_data(gdf):
     fall.columns = cols_fall        
     winter.columns = cols_wint        
     spring.columns = cols_spri 
-
-    gdf_seas = summer.merge(fall, left_index = True, right_index = True)
-    gdf_seas = gdf_seas.merge(spring, left_index = True, right_index = True)
-    gdf_seas = gdf_seas.merge(winter, left_index = True, right_index = True)        
-    gdf_seas.reset_index(inplace = True)
-
-    ## also aggregate annually 
-    gdf_ann = gdf.groupby('year').mean()
     
-    grouped = gdf_ann.merge(gdf_seas, on = 'year')
+    max_rows = max(len(summer), len(fall), len(spring), len(winter))
+    
+    if len(summer) == max_rows: 
+        
+        if len(fall) == max_rows: 
+            gdf_seas = summer.merge(fall, left_index = True, right_index = True)
+            
+            if len(winter) == max_rows:
+                gdf_seas = gdf_seas.merge(winter, left_index = True, right_index = True)        
+                
+                if len(spring) == max_rows: 
+                    gdf_seas = gdf_seas.merge(spring, left_index = True, right_index = True)
+                     
+        else: 
+            if len(winter) == max_rows:
+                gdf_seas = summer.merge(winter, left_index = True, right_index = True)
+                
+                if len(spring) == max_rows: 
+                    gdf_seas = gdf_seas.merge(spring, left_index = True, right_index = True)
 
-    return grouped
+            elif len(spring) == max_rows: 
+                gdf_seas = summer.merge(spring, left_index = True, right_index = True)
+                
+        gdf_seas.reset_index(inplace = True)   
+        grouped = gdf_ann.merge(gdf_seas, on = 'year')
+        return grouped
+    
+    elif len(fall) == max_rows: ## no summer
+                
+        if len(winter) == max_rows:
+            gdf_seas = fall.merge(winter, left_index = True, right_index = True)        
+            
+            if len(spring) == max_rows: 
+                gdf_seas = gdf_seas.merge(spring, left_index = True, right_index = True)
+                
+        elif len(spring) == max_rows: 
+            gdf_seas = fall.merge(spring, left_index = True, right_index = True)
+
+        else: 
+            gdf_seas = fall
+                
+        gdf_seas.reset_index(inplace = True)   
+        grouped = gdf_ann.merge(gdf_seas, on = 'year')
+        return grouped     
+            
+    elif len(winter) == max_rows: ## no summer or fall 
+        if len(spring) == max_rows: 
+            gdf_seas = winter.merge(spring, left_index = True, right_index = True)
+        else: 
+            gdf_seas = winter
+        gdf_seas.reset_index(inplace = True)   
+        grouped = gdf_ann.merge(gdf_seas, on = 'year')
+        return grouped  
+    
+    elif len(spring) == max_rows: 
+        gdf_seas = spring
+        gdf_seas.reset_index(inplace = True)   
+        grouped = gdf_ann.merge(gdf_seas, on = 'year')
+        return grouped  
+    
+    else: 
+        return gdf_ann
 
 def powerset(iterable):
     s = list(iterable)
@@ -333,21 +527,29 @@ def r2_calc(predicted, actual):
     r2 = 1 - (RSS/TSS)
     return r2
 
-## input gdf should be a geodataframe with timestamps, at a seasonal 
-## or annual frequency 
+## input gdf should be a dataframe with timestamps, at a seasonal 
+## or annual frequency (not gdf, I lied)
+## pvals_all asks to check all pvalues 
 def regs(outcome, input_gdf, country, detrending = False, 
-                    year_pred = '', plot = True, threshold = 0.6, test_threshold = .3):  
+                    year_pred = '', plot = True, threshold = 0.5, test_threshold = .3, 
+                    pvals_all = False, num = 3):  
     count = 0
-    old_r2 = -10 
-    reg_top = ''
+    old_r2 = -10    
     regression_output = pd.DataFrame()    
+    reg_top = pd.DataFrame()    
     ## merge outcome and data of interest
     all_data = outcome.merge(input_gdf, on = 'year')
+ #   all_data = all_data.groupby('year').mean()
+  #  all_data.reset_index(inplace = True)    
     
     ## and re-sort for x and y while ensuring we are not wasting time
     ## with regressions that are not useful
-    x = all_data.drop(['outcome', 'year', 'month', \
-                       'wint_month', 'summ_month', 'spri_month', 'fall_month'], axis = 1)
+    x = all_data.drop(['outcome'], axis = 1, errors = 'ignore')
+    
+    x = x.loc[:,~x.columns.str.contains('month', case=False)]         
+    x = x.loc[:,~x.columns.str.contains('year', case=False)]         
+    x = x.loc[:,~x.columns.str.contains('Unnamed', case=False)]         
+    
     x = sm.add_constant(x, has_constant = 'add')
     y = all_data['outcome']
     
@@ -355,13 +557,13 @@ def regs(outcome, input_gdf, country, detrending = False,
     ## and of course with solid p-values 
     ## also, not more than 5 inputs
     if len(x) > 2: 
-        X_train, X_test, y_train, y_test = tts(x, y, test_size=.3, random_state=1)
+        X_train, X_test, y_train, y_test = tts(x, y, test_size = .3, random_state = 1)
     
         for subset in powerset(x.columns): 
             if 'const' in itertools.chain(subset):
     #            print('we good')
-                if (len(subset) > 0) & (len(subset) < 5):
-                    print(list(subset))
+                if (len(subset) > 0) & (len(subset) < num):
+                    #print(list(subset))
                     model = sm.OLS(y_train, X_train[list(subset)]).fit()
             
                     training = model.predict(X_train[list(subset)])
@@ -373,29 +575,66 @@ def regs(outcome, input_gdf, country, detrending = False,
             
                     pval = list(model.pvalues)
                     r2_mod = float(model.rsquared_adj)
-                    print(r2_mod)
+                    #print(r2_mod)
+                    coefs = model.params
                     
-                    if ((r2_mod > threshold) and (pred_r2 > test_threshold)): 
-                        series = list(subset)
-                        predicted_all = model.predict(x[list(subset)])
+                    if ((r2_mod > threshold) and (pred_r2 > test_threshold)):
                         
-                        ## also make sure to plot! 
-                        if plot == True: 
-                            count += 1
+                        if pvals_all == False: 
+                            
+                            series = list(subset)
+                            predicted_all = model.predict(x[list(subset)])
                             r2_all = r2_calc(predicted_all, y)
-                            try: 
-                                plot_reg(training, y_train, predicted, y_test, r2_all, country, count)
-                            except: print("Plotting failed")                        
-                        new = {'inputs':[series], 'r2': r2_all, 'pval':[pval], 'test_r2': pred_r2} 
-                        new = pd.DataFrame(new)
-                        regression_output = pd.concat([regression_output, new], axis = 0)
-                        print('r2 all: ' + str(r2_all))
-                        print('r2 old: ' + str(old_r2))
                         
-                        if r2_all > old_r2: 
-                            reg_top = new.copy()
-                            old_r2 = r2_all
-    else: print(country + ' insufficient data')                                      
+                            
+                            new = {'inputs':[series], 'r2': r2_all, 'pval':[pval], 
+                                   'test_r2': pred_r2, 'coefs':[coefs]} 
+                            new = pd.DataFrame(new)
+                            regression_output = pd.concat([regression_output, new], axis = 0)
+    
+                            ## also make sure to plot! 
+                            if plot == True: 
+                                count += 1
+                                try: 
+                                    plot_reg(training, y_train, predicted, y_test, r2_all, country, count)
+                                except: print("Plotting failed")                        
+                            print('country r2 all: ' + str(r2_all))
+                            print('country r2 old: ' + str(old_r2))
+                            
+                            if r2_all > old_r2: 
+                                reg_top = new.copy()
+                                old_r2 = r2_all
+                                
+                        else:
+                            
+                            pval2 = pval[1:]
+                            if all(i <= pvals_all for i in pval2):
+                            
+                                series = list(subset)
+                                predicted_all = model.predict(x[list(subset)])
+                                r2_all = r2_calc(predicted_all, y)
+                                
+                                new = {'inputs':[series], 'r2': r2_all, 'pval':[pval], 
+                                       'test_r2': pred_r2, 'coefs':[coefs]}
+                                new = pd.DataFrame(new)
+                                regression_output = pd.concat([regression_output, new], axis = 0)
+        
+                                ## also make sure to plot! 
+                                if plot == True: 
+                                    count += 1
+                                    try: 
+                                        plot_reg(training, y_train, predicted, y_test, r2_all, country, count)
+                                    except: print("Plotting failed")                        
+                                print('country r2 all: ' + str(r2_all))
+                                print('country r2 old: ' + str(old_r2))
+                                
+                                if r2_all > old_r2: 
+                                    reg_top = new.copy()
+                                    old_r2 = r2_all
+                                
+                            
+    else: print(country + ' insufficient data')   
+    
     return regression_output, reg_top
 
 ######################### save outputs! ##############################
