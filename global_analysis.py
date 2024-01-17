@@ -19,10 +19,8 @@ import numpy
 from geo_ref_dams import find_basins_in_country
 
 print('starting!')
-use_country_avg = True
+use_country_avg = False 
 hybas = 'country'
-pct_gen = 99.8
-
 ## start by identifying countries of interest
 ## want to save the generation data just for the countries
 ## with hydro generating more than a specified % 
@@ -47,11 +45,6 @@ def id_hydro_countries(pct_gen = 90, year = 2015):
     gen_data3 = gen_data2.merge(countries, on = 'Country')
 #    gen_data3 = gen_data3.iloc[:, 1:-3]
 
-    ## previously ID'ed which country names are inconsistent to create 
-    ## a country translation csv 
-#    bad_index = gen_data['Country'].isin(wb_hydro['Country Name'])
-#    bad_names = gen_data.loc[~bad_index]
-    
     return gen_data3
 
 ## once we have the generation data, we need to iterate over each country 
@@ -103,77 +96,26 @@ def remove_lin_trend(input_data):  ## input data should have the year
 
 ## clean any input data and clip to country of interest 
 ## using pre-existing scripts (thanks old self)
-from cleaning_funcs import agg_data #subset_imerg
 from cleaning_funcs import clean_modis_lst
 from cleaning_funcs import clean_modis_snow
-from cleaning_funcs import clean_dmsp
+from cleaning_funcs import clean_modis_evi
 from cleaning_funcs import get_geom
 from cleaning_funcs import group_data
 from cleaning_funcs import regs
-
-def get_dfs(country, country_geom, ds, hybas = 'country'):
-    ## need to import 
-    ## 1) DMSP-VIIRS data (night lights)
-    ## 2) MODIS LST data (temp)
-    ## 3) IMERG data (precip)
-    ## 4) MODIS snow cover data 
-    
-    dmsp_df = clean_dmsp(country_geom, ds, hybas)
-    print("DMSP DF worked!")
-
-
-    print('starting get_dfs function')
-    ## MODIS SNOW
-    snow_df = clean_modis_snow(country_geom, file_header = 'MOD10CM*.hdf')
-#    snow_df = 'place holder'
-    print('snow worked!')    
-    ## MODIS LST 
-    modis_df = clean_modis_lst(country_geom, file_header = 'MOD11C3*.hdf')
-#    modis_df = 'place holder'   
-    print('MODIS worked!')
-
-    ## IMERG 
-    imerg_df = agg_data(country_geom, ds, hybas, 'precipitation', time = '')
-    #subset_imerg(country, country_geom, ds, hybas)
-#    imerg_df = 'place holder'   
-    print('IMERG worked!')    
-    
-    return modis_df, imerg_df, snow_df
-
+from cleaning_funcs import get_dfs
 
 ## final for loop will use all of these in order
 ## start by getting countries of interest
 
-gen_data = id_hydro_countries(pct_gen = pct_gen, year = 2015)
+gen_data = id_hydro_countries(pct_gen = 25, year = 2015)
 
 ##     import xarray 
 import xarray 
 import rioxarray 
-from pyproj import transform, Proj
-import numpy as np
 
-ds = xarray.open_mfdataset(paths = 'IMERG/imerge_file*.nc4', combine  = 'by_coords') 
+ds = xarray.open_mfdataset(paths = 'IMERG/imerge_file*.nc4', combine  = 'by_coords')
 ds.rio.set_spatial_dims(x_dim = 'lon', y_dim = 'lat', inplace = True)
 ds.rio.write_crs("epsg:4326", inplace = True)
-
-# xi, yi = np.meshgrid(ds.lon, ds.lat)
-# wanted = (xi, yi)
-# points = np.vstack(ds.lon, ds.lat)
-
-
-# if hybas != 'country': 
- 
-#     x1 = ds.lon.values
-#     y1 = ds.lat.values
-#     y1 = y1.reshape(-1,1)
-#     x1 = x1.reshape(-1,1)
-
-#     ones = ((2100, 1260))
-#     xlon = np.multiply(ones, x1)
-#     ylon = np.multiply(ones, y1)
-    
-#     lat, lon = transform('epsg:4326', 'epsg:4326', xlon, ylon)
-    
 
 ## then loop over all of them and run the regression algorithm
 results = {}
@@ -198,53 +140,64 @@ for country in gen_data['Country Name']:
         geom = country_geom 
 
 
-    else: ## use a subbasin/transboundary basin (HUZZAH!!!!!!!!!)
-    
-        try: 
+    else: ## use a subbasin/transboundary basin
+        if hybas == 'watersheds': 
+            ## need each of the inputs to be clipped to the different possible hydro units
+            print('placeholder')
+            
+        else: 
             geom = find_basins_in_country(country_geom, hybas)
         
-        except: 
-            failed = True 
-    ## clean & clip data 
-    ## changing this so that if hybas == 'country', then it will 
-    ## clip to the basin containing the country or unit of focus
-    
-    if failed == True: 
-        print(country + ' failed')
-      
-    else: 
-        lst, imerg, snow, dmsp = get_dfs(country, geom, ds, hybas)
-    
-        ## coordinates are for some reason flipped... 
-        import shapely
-        snow['geometry'] = gpd.GeoSeries(snow['geometry']).map(lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
-    
-        ## need to combine into one gdf
-        ## because right now just doing by country, don't need to worry about
-        ## space. BUT for subbasins need to figure this out...
-        input_gdf = imerg.merge(snow, on = 'time')
-        input_gdf = input_gdf.merge(lst, left_index = True, right_on = 'time')
-        input_gdf = input_gdf.merge(dmsp, left_index = True, right_on = 'time')
+            ## clean & clip data 
+            ## changing this so that if hybas == 'country', then it will 
+            ## clip to the basin containing the country or unit of focus
         
-        input_gdf.reset_index(inplace = True)
+            lst, imerg, snow, evi = get_dfs(country, geom, ds, hybas = 'country')
         
-        ## make sure to save for each country the top performing algorithm 
-        gdf_grouped = group_data(input_gdf)
-        
-        if detrending == True: 
-            reg_det, reg_top_det = regs(det_data, gdf_grouped, country, year_pred = year_pred, detrending = True, 
-                                         threshold = 0.5)
-            results_det[country] = reg_det
-            results_top_det[country] = reg_top_det
+            ## coordinates are for some reason flipped... 
+            import shapely
+            
+            ## need to combine into one gdf
+            ## because right now just doing by country, don't need to worry about
+            ## space. BUT for subbasins need to figure this out...
     
-        reg_all, reg_top = regs(clean_df, gdf_grouped, country, plot = True, threshold = 0.5)
     
-        results[country] = reg_all
-        results_top[country] = reg_top
+    snow['geometry'] = gpd.GeoSeries(snow['geometry']).map(lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
+    evi['geometry'] = gpd.GeoSeries(evi['geometry']).map(lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
     
-        write_dict(results_top, str(country) + "_gen_top_results")
-        write_dict(results_top_det, str(country) + "_gen_top_results_det")
+    input_gdf = imerg.merge(snow, on = 'time')
+    input_gdf = input_gdf.merge(lst, left_index = True, right_on = 'time')
+    input_gdf = input_gdf.merge(evi, left_index = True, right_on = 'time')
+    
+    input_gdf.reset_index(inplace = True)
+    
+    ## make sure to save for each country the top performing algorithm 
+    ## note: right now it doesn't save individually, it accumulates them
+    ## so the first country will have one result, and the last country's dict 
+    ## will hold all of them (not a terrible outcome, but not ideal)
+    
+    gdf_grouped = group_data(input_gdf)
+    
+    if detrending == True: 
+        reg_det, reg_top_det = regs(det_data, gdf_grouped, country, year_pred = year_pred, detrending = True, 
+                                     threshold = 0.5)
+        results_det[country] = reg_det
+        results_top_det[country] = reg_top_det
+
+    reg_all, reg_top = regs(clean_df, gdf_grouped, country, plot = True, threshold = 0.5)
+
+    results[country] = reg_all
+    results_top[country] = reg_top
+
+    write_dict(results_top, str(country) + "_gen_top_results")
+    write_dict(results_top_det, str(country) + "_gen_top_results_det")
 
 write_dict(results, "gen_results") 
 write_dict(results_det, "gen_results_det") 
+
+
+
+
+
+
 
