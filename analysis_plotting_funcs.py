@@ -9,6 +9,9 @@ import numpy as np
 import matplotlib.pyplot as plt 
 import math 
 import statsmodels.api as sm
+import geopandas as gpd
+from statsmodels.tsa.tsatools import lagmat
+
 
 from cleaning_funcs import id_hydro_countries
 from cleaning_funcs import regs
@@ -145,20 +148,22 @@ def detrend(gen_data):
     return det_gen, year_predictions
 
 ## for when I have the input csvs, but not the results
-def analysis_and_plot(hybas, hybas2, lag = False, title = '', plot_hydro = False,                       
+def analysis_and_plot(hybas, hybas2, cap_fac, countries, gen_data,
+                      lag = False, title = '', plot_hydro = False,                       
                       pvals_all = False, snow = True, detrending = True, csv = False, 
-                      num = 5): 
-    countries = id_hydro_countries(pct_gen = 25, year = 2015)
+                      num = 5, r_thresh = 0.3): 
+    # countries = id_hydro_countries(pct_gen = 25, year = 2015)
 
-    gen_data = countries.T
-    gen_data.reset_index(inplace = True)
-    ## drop the rows with the column names 
-    gen_data.columns = gen_data.iloc[0,:]
-    gen_data = gen_data.iloc[1:,:]
-    gen_data = gen_data.rename(columns = {'Country':'year'})
+    # gen_data = countries.T
+    # gen_data.reset_index(inplace = True)
+    # ## drop the rows with the column names 
+    # gen_data.columns = gen_data.iloc[0,:]
+    # gen_data = gen_data.iloc[1:,:]
+    # gen_data = gen_data.rename(columns = {'Country':'year'})
     
     ## if there is no data (or data is equal to 0), drop 
     ## nans will be dropped too 
+    
     for c in gen_data.columns: 
         gen_data.loc[:,c] = pd.to_numeric(gen_data.loc[:,c], errors = 'coerce')
     
@@ -346,26 +351,32 @@ def analysis_and_plot(hybas, hybas2, lag = False, title = '', plot_hydro = False
     failed = gpd.GeoDataFrame(failed)
     
     if plot_hydro == True: 
-        fig, (ax1, ax2) = plt.subplots(ncols=1, nrows = 2, figsize=(15, 15), sharex=True, sharey=True)
-        
-        hydro_gdf.plot(ax = ax1, column='2015', missing_kwds={'color': 'lightgrey'},
-                   figsize = (25, 20), cmap = 'YlGnBu', legend = True)
-        ax1.set_title('Percent Generation From Hydropower',fontsize=14)
-        
-        
-        merged_gdf.plot(ax = ax2, column = 'r2', missing_kwds={'color':'lightgrey'}, 
-                        figsize = (25, 20), cmap = 'YlGnBu', legend = True)
-        ax2.set_title('r2 for Generation Index, ' + hybas, fontsize=14)
-        
-        failed.plot(ax = ax2, column = 'r2', figsize = (25,20), color = 'red', alpha = 0.7)
-
-    else:     
-        
         fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
                         figsize = (25, 20), cmap = 'YlGnBu', legend = True)
         fig.set_title('r2 for Generation Index, ' + hybas, fontsize=14)
         
         failed.plot(ax = fig, column = 'r2', figsize = (25,20), color = 'red', alpha = 0.7)
+        
+        # fig, (ax1, ax2) = plt.subplots(ncols=1, nrows = 2, figsize=(15, 15), sharex=True, sharey=True)
+        
+        # hydro_gdf.plot(ax = ax1, column='2015', missing_kwds={'color': 'lightgrey'},
+        #            figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+        # ax1.set_title('Percent Generation From Hydropower',fontsize=14)
+        
+        
+        # merged_gdf.plot(ax = ax2, column = 'r2', missing_kwds={'color':'lightgrey'}, 
+        #                 figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+        # ax2.set_title('r2 for Generation Index, ' + hybas, fontsize=14)
+        
+        # failed.plot(ax = ax2, column = 'r2', figsize = (25,20), color = 'red', alpha = 0.7)
+
+    # else:     
+        
+    #     fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
+    #                     figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+    #     fig.set_title('r2 for Generation Index, ' + hybas, fontsize=14)
+        
+    #     failed.plot(ax = fig, column = 'r2', figsize = (25,20), color = 'red', alpha = 0.7)
     
     regs_top['df'] = hybas2
     
@@ -381,15 +392,16 @@ def analysis_and_plot(hybas, hybas2, lag = False, title = '', plot_hydro = False
         return regs_all, regs_top, relevant_inputs
     
 ## for when I have the results csvs, not the input data
-def read_results(hybas, lag = False, title = '', plot_hydro = False): 
-    countries = id_hydro_countries(pct_gen = 25, year = 2015)
+def read_results(hybas, countries, gen_data, lag = False, title = '', plot_hydro = False): 
     
-    gen_data = countries.T
-    gen_data.reset_index(inplace = True)
-    ## drop the rows with the column names 
-    gen_data.columns = gen_data.iloc[0,:]
-    gen_data = gen_data.iloc[1:,:]
-    gen_data = gen_data.rename(columns = {'Country':'year'})
+    # countries = id_hydro_countries(pct_gen = 25, year = 2015)
+    
+    # gen_data = countries.T
+    # gen_data.reset_index(inplace = True)
+    # ## drop the rows with the column names 
+    # gen_data.columns = gen_data.iloc[0,:]
+    # gen_data = gen_data.iloc[1:,:]
+    # gen_data = gen_data.rename(columns = {'Country':'year'})
     
     ## if there is no data (or data is equal to 0), drop 
     ## nans will be dropped too 
@@ -441,25 +453,32 @@ def read_results(hybas, lag = False, title = '', plot_hydro = False):
     
                             ############ PLOT ############
     if plot_hydro == True: 
-        fig, (ax1, ax2) = plt.subplots(ncols=1, nrows = 2, figsize=(15, 15), sharex=True, sharey=True)
-        
-        hydro_gdf.plot(ax = ax1, column='2015', missing_kwds={'color': 'lightgrey'},
-                   figsize = (25, 20), cmap = 'YlGnBu', legend = True)
-        ax1.set_title('Percent Generation From Hydropower',fontsize=14)
-        
-        
-        merged_gdf.plot(ax = ax2, column = 'r2', missing_kwds={'color':'lightgrey'}, 
-                        figsize = (25, 20), cmap = 'YlGnBu', legend = True)
-        ax2.set_title(f'r2 for Generation Index, {title}', fontsize=14)
-        
-        failed.plot(ax = ax2, column = 'r2', figsize = (25,20), color = 'red')
-
-    else:     
-        
+                
         fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
                         figsize = (25, 20), cmap = 'YlGnBu', legend = True)
         fig.set_title(f'r2 for Generation Index, {title}', fontsize=14)
         
         failed.plot(ax = fig, column = 'r2', figsize = (25,20), color = 'red')
+        
+    #     fig, (ax1, ax2) = plt.subplots(ncols=1, nrows = 2, figsize=(15, 15), sharex=True, sharey=True)
+        
+    #     hydro_gdf.plot(ax = ax1, column='2015', missing_kwds={'color': 'lightgrey'},
+    #                figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+    #     ax1.set_title('Percent Generation From Hydropower',fontsize=14)
+        
+        
+    #     merged_gdf.plot(ax = ax2, column = 'r2', missing_kwds={'color':'lightgrey'}, 
+    #                     figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+    #     ax2.set_title(f'r2 for Generation Index, {title}', fontsize=14)
+        
+    #     failed.plot(ax = ax2, column = 'r2', figsize = (25,20), color = 'red')
+
+    # else:     
+        
+    #     fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
+    #                     figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+    #     fig.set_title(f'r2 for Generation Index, {title}', fontsize=14)
+        
+    #     failed.plot(ax = fig, column = 'r2', figsize = (25,20), color = 'red')
 
     return regs_all, regs_top
