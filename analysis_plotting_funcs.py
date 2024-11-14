@@ -8,15 +8,13 @@ import pandas as pd
 import numpy as np 
 import matplotlib.pyplot as plt 
 import math 
-import statsmodels.api as sm
 import geopandas as gpd
 from statsmodels.tsa.tsatools import lagmat
+import statsmodels.api as sm
+from cleaning_funcs2 import regs
 
-from cleaning_funcs import id_hydro_countries
-from cleaning_funcs import regs
 
-
-def predict_countries(country, hybas2, country_gen, reg_inputs): 
+def predict_countries(country, hybas2, country_gen, reg_inputs, coefs, variables): 
     if 'watershed' in hybas2:
         hybas = 'watersheds'
     else: hybas = hybas2
@@ -37,39 +35,90 @@ def predict_countries(country, hybas2, country_gen, reg_inputs):
         inputs.set_index('year', inplace = True)
         inputs = inputs.merge(country_gen, on = 'year')
     
-#    if hybas2 != 'watersheds': 
-#        for i in np.arange(0,len(list(reg_inputs.split(","))):
-#            print(reg_inputs[i])
     try:         
-        reg_inputs2 = inputs[[i for i in reg_inputs[1:]]] ## skip constant
-        reg_inputs2 = sm.add_constant(reg_inputs2)
-              
-        y = inputs[country] ## outcome should be second column
+         inputs2 = inputs[variables[1:]]
+         inputs2['year'] = inputs['year']
+         
+         predicted = float(coefs[0])  # Initialize prediction with the intercept term
+         
+         for i in np.arange(0, len(variables)-1):
+             i = i + 1
+             predicted += float(coefs[i]) * inputs2[variables[i]]
         
-        est = sm.OLS(y, reg_inputs2)
-        est2 = est.fit()
-        
-        predicted = pd.DataFrame(est2.predict(reg_inputs2))
-        predicted.columns = [country]
-        
-        predicted[predicted < 0] = 0
-    #    predictions = pd.concat([predictions, predicted], axis = 1)  
-        #predictions.index = inputs.year
-        
-        #gen_data2 = make_numeric(gen_data)
-        #gen_data2 = gen_data2[(gen_data2['year'] <= inputs.year.max()) & (gen_data2['year'] >= inputs.year.min())]
-        #gen_data2.set_index('year', inplace = True)
-    #    error_pct = ((predictions - gen_data2)/gen_data2).dropna(axis =1)
-    #    error = (predictions - gen_data2).dropna(axis =1)
-        error_pct = ((predicted.iloc[:,0] - inputs.iloc[:,-1])/inputs.iloc[:,-1]).mean()*100
-        error = (predicted.iloc[:,0] - inputs.iloc[:,-1])
-    
-        print(f"{country} error pct: {error_pct}")
     except: 
+        inputs2 = inputs[variables[1:]]
+        inputs2['year'] = inputs['year']
+
         predicted = pd.DataFrame(np.repeat(-9,20))
-        predicted.columns = [country]
+    
+    
+    predicted = pd.DataFrame(predicted)
+    predicted.columns = [country]
+    predicted = pd.concat([predicted, inputs2['year']], axis = 1)
     
     return predicted
+
+def predict_countries_mult(country, hybas2, country_gen, reg_inputs, coefs, variables): 
+    
+    input_vals = pd.DataFrame(columns = reg_inputs)
+    
+    for num, var in enumerate(hybas2): 
+        ## first need to retrieve the different datasets
+#        print(var)
+#        print(num)
+        
+        if 'watershed' in var:
+            hybas = 'watersheds'
+        else: hybas = var
+        
+        try: 
+            inputs = pd.read_csv(f"Results_all/Inputs_{hybas}/{country}_input_data.csv").iloc[:,1:]
+        except: 
+            try: 
+                inputs = pd.read_csv(f"Results_all/Inputs_{hybas}/{country}_input_data_{hybas}.csv").iloc[:,1:]
+            except: 
+                try: 
+                    inputs = pd.read_csv(f"Results_all/Inputs_{var}/{country}_input_data_{hybas}.csv").iloc[:,1:]
+                except: 
+                    inputs = 'failed'
+                    print(f"failed to find {country}, {hybas}")
+        
+        clean_name = reg_inputs[num+1].replace('_y','')
+        clean_name = clean_name.replace('_x','')
+        var_needed = inputs[clean_name]
+        
+        input_vals.iloc[:,num+1] = var_needed
+        
+
+    input_vals['const'] = coefs[0]
+    input_vals['year'] = inputs['year']
+
+
+    if isinstance(input_vals, pd.DataFrame): 
+        #print('True')
+        input_vals.set_index('year', inplace = True)
+        input_vals = input_vals.merge(country_gen, on = 'year')
+    
+             
+    inputs2 = input_vals[variables[1:]]
+    inputs2['year'] = input_vals['year']
+   
+    predicted = pd.DataFrame(index = np.arange(0, len(inputs2)), 
+                             columns = [country]) 
+   
+    predicted.iloc[:,0] = float(coefs[0])  # Initialize prediction with the intercept term
+   
+    for i in np.arange(1, len(variables)):
+        print(coefs[i])
+        print(variables[i])
+        predicted.iloc[:,0] += float(coefs[i]) * inputs2[variables[i]]
+  
+    #predicted = pd.DataFrame(predicted)
+    predicted.columns = [country]
+    predicted = pd.concat([predicted, inputs2['year']], axis = 1)
+    
+    return predicted
+
 
 def make_scatters(predictions, gen_data2, r2, name = ''): 
     ncols = 3
@@ -79,13 +128,12 @@ def make_scatters(predictions, gen_data2, r2, name = ''):
     gs = plt.GridSpec(nrows, ncols, wspace = 0.2, hspace = .4) 
     axs = []
     for c, num in zip(predictions.columns, range(1, len(predictions.columns)+1)):
-        print(c)
-        print(num)
+        #print(c)
+        #print(num)
         axs.append(fig.add_subplot(gs[num-1]))
         im = axs[-1].scatter(predictions[c], gen_data2[c], c = r2[c], vmin = .3, vmax = 1)
         axs[-1].plot([gen_data2[c].min(), gen_data2[c].max()],
-                    [gen_data2[c].min(), gen_data2[c].max()], 
-                    color = 'black', linestyle = '--')
+                    [gen_data2[c].min(), gen_data2[c].max()]) 
         axs[-1].set_xlabel("Predicted", fontsize = 14)
         axs[-1].set_ylabel("Observed", fontsize = 12)
         axs[-1].set_title(f"{c}", fontsize = 14)
@@ -149,27 +197,27 @@ def detrend(gen_data):
 def analysis_and_plot(hybas, hybas2, countries, gen_data, cap_fac,
                       lag = False, r_thresh = 0.4,
                       title = '', plot_hydro = False,                       
-                      pvals_all = False, snow = True, detrending = True, csv = False, 
-                      num = 5): 
-    countries = id_hydro_countries(pct_gen = 25, year = 2015, cap_fac = cap_fac)
+                      pvals_all = False, snow = True, detrending = True, 
+                      csv = False, num = 5): 
+#    countries = id_hydro_countries(pct_gen = 25, year = 2015, cap_fac = cap_fac)
 
-    gen_data = countries.T
-    gen_data.reset_index(inplace = True)
+#    gen_data = countries.T
+#    gen_data.reset_index(inplace = True)
     ## drop the rows with the column names 
-    gen_data.columns = gen_data.iloc[0,:]
-    gen_data = gen_data.iloc[1:,:]
-    gen_data = gen_data.rename(columns = {'Country':'year'})
+#    gen_data.columns = gen_data.iloc[0,:]
+#    gen_data = gen_data.iloc[1:,:]
+#    gen_data = gen_data.rename(columns = {'Country':'year'})
     
     ## if there is no data (or data is equal to 0), drop 
     ## nans will be dropped too 
-    for c in gen_data.columns: 
-        gen_data.loc[:,c] = pd.to_numeric(gen_data.loc[:,c], errors = 'coerce')
+#    for c in gen_data.columns: 
+#        gen_data.loc[:,c] = pd.to_numeric(gen_data.loc[:,c], errors = 'coerce')
     
-    gen_data = gen_data[(gen_data['year'] > 2000) & (gen_data['year'] < 2021)]
-    gen_data['year'] = gen_data['year'].apply(np.int64)
+#    gen_data = gen_data[(gen_data['year'] > 2000) & (gen_data['year'] < 2021)]
+#    gen_data['year'] = gen_data['year'].apply(np.int64)
     
-    if detrending == True:  
-        gen_data, year_pred = detrend(gen_data)
+#    if detrending == True:  
+#        gen_data, year_pred = detrend(gen_data)
         
         
     ## read in processed geospatial data -- now aggregated and put into csv format
@@ -231,18 +279,20 @@ def analysis_and_plot(hybas, hybas2, countries, gen_data, cap_fac,
         except: 
             try:
                 new = pd.read_csv(f"Results_all/Inputs_{hybas}/{c}_input_data_{hybas}.csv").iloc[:,1:]
-                evi = pd.read_csv(f"Veg_indices/{c}_evi_data_country.csv")
-                evi['year'] = pd.to_datetime(evi['time']).dt.year
-                
+                try: 
+                    evi = pd.read_csv(f"Veg_indices/{c}_evi_data_country.csv")
+                    evi['year'] = pd.to_datetime(evi['time']).dt.year
+                    new = new.merge(evi[['EVI', 'year']], on = 'year')
+                except: pass
+            
+                if snow == False:
+                    new = new.loc[:,~new.columns.str.contains('Snow', case=False)] 
+                 
+    
                 outcome = gen_data.loc[:, ['year', c]]
                 outcome.columns = ['year', 'outcome']
         #        new = new.merge(outcome, on = 'year')
                 country_data[c] = new
-                
-                if snow == False:
-                    new = new.loc[:,~new.columns.str.contains('Snow', case=False)] 
-                
-                new = new.merge(evi[['EVI', 'year']], on = 'year')
                 
                 if lag != False: 
                     new2 = lagmat(new, maxlag = lag, use_pandas = True)
@@ -277,18 +327,20 @@ def analysis_and_plot(hybas, hybas2, countries, gen_data, cap_fac,
             except:
                 try:
                     new = pd.read_csv(f"Results_all/Inputs_{hybas}/{c}_input_data_{hybas2}.csv").iloc[:,1:]
-                    evi = pd.read_csv(f"Veg_indices/{c}_evi_data_country.csv")
-                    evi['year'] = pd.to_datetime(evi['time']).dt.year
-            
+                    try: 
+                        evi = pd.read_csv(f"Veg_indices/{c}_evi_data_country.csv")
+                        evi['year'] = pd.to_datetime(evi['time']).dt.year
+                        new = new.merge(evi[['EVI', 'year']], on = 'year')
+                    except: pass
+                
+                    if snow == False:
+                        new = new.loc[:,~new.columns.str.contains('Snow', case=False)] 
+                     
+        
                     outcome = gen_data.loc[:, ['year', c]]
                     outcome.columns = ['year', 'outcome']
             #        new = new.merge(outcome, on = 'year')
                     country_data[c] = new
-                    
-                    if snow == False:
-                        new = new.loc[:,~new.columns.str.contains('Snow', case=False)] 
-                       
-                    new = new.merge(evi[['EVI', 'year']], on = 'year')
                         
                     if lag != False: 
                         new2 = lagmat(new, maxlag = lag, use_pandas = True)
@@ -384,22 +436,23 @@ def analysis_and_plot(hybas, hybas2, countries, gen_data, cap_fac,
       #  relevant_inputs.to_csv(f"rel_inputs_{hybas}.csv")
         regs_top.to_csv(f"regs_top_{hybas}.csv")
     
-    if detrending == True:
-        return regs_all, regs_top, relevant_inputs, gen_data, year_pred
-    
-    else: 
-        return regs_all, regs_top, relevant_inputs
+#    if detrending == True:
+#        return regs_all, regs_top, relevant_inputs, gen_data, year_pred
+#    
+#    else: 
+    return regs_all, regs_top, relevant_inputs
     
 ## for when I have the results csvs, not the input data
-def read_results(hybas, lag = False, title = '', plot_hydro = False): 
-    countries = id_hydro_countries(pct_gen = 25, year = 2015)
+def read_results(hybas, gen_data, countries, 
+                 lag = False, title = '', plot_hydro = False): 
+    # countries = id_hydro_countries(pct_gen = 25, year = 2015)
     
-    gen_data = countries.T
-    gen_data.reset_index(inplace = True)
-    ## drop the rows with the column names 
-    gen_data.columns = gen_data.iloc[0,:]
-    gen_data = gen_data.iloc[1:,:]
-    gen_data = gen_data.rename(columns = {'Country':'year'})
+    # gen_data = countries.T
+    # gen_data.reset_index(inplace = True)
+    # ## drop the rows with the column names 
+    # gen_data.columns = gen_data.iloc[0,:]
+    # gen_data = gen_data.iloc[1:,:]
+    # gen_data = gen_data.rename(columns = {'Country':'year'})
     
     ## if there is no data (or data is equal to 0), drop 
     ## nans will be dropped too 
@@ -451,25 +504,146 @@ def read_results(hybas, lag = False, title = '', plot_hydro = False):
     
                             ############ PLOT ############
     if plot_hydro == True: 
-        fig, (ax1, ax2) = plt.subplots(ncols=1, nrows = 2, figsize=(15, 15), sharex=True, sharey=True)
-        
-        hydro_gdf.plot(ax = ax1, column='2015', missing_kwds={'color': 'lightgrey'},
-                   figsize = (25, 20), cmap = 'YlGnBu', legend = True)
-        ax1.set_title('Percent Generation From Hydropower',fontsize=14)
-        
-        
-        merged_gdf.plot(ax = ax2, column = 'r2', missing_kwds={'color':'lightgrey'}, 
-                        figsize = (25, 20), cmap = 'YlGnBu', legend = True)
-        ax2.set_title(f'r2 for Generation Index, {title}', fontsize=14)
-        
-        failed.plot(ax = ax2, column = 'r2', figsize = (25,20), color = 'red')
-
-    else:     
-        
         fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
                         figsize = (25, 20), cmap = 'YlGnBu', legend = True)
         fig.set_title(f'r2 for Generation Index, {title}', fontsize=14)
         
         failed.plot(ax = fig, column = 'r2', figsize = (25,20), color = 'red')
 
+    #     fig, (ax1, ax2) = plt.subplots(ncols=1, nrows = 2, figsize=(15, 15), sharex=True, sharey=True)
+        
+    #     hydro_gdf.plot(ax = ax1, column='2015', missing_kwds={'color': 'lightgrey'},
+    #                figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+    #     ax1.set_title('Percent Generation From Hydropower',fontsize=14)
+        
+        
+    #     merged_gdf.plot(ax = ax2, column = 'r2', missing_kwds={'color':'lightgrey'}, 
+    #                     figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+    #     ax2.set_title(f'r2 for Generation Index, {title}', fontsize=14)
+        
+    #     failed.plot(ax = ax2, column = 'r2', figsize = (25,20), color = 'red')
+
+    # else:     
+        
+    #     fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
+    #                     figsize = (25, 20), cmap = 'YlGnBu', legend = True)
+    #     fig.set_title(f'r2 for Generation Index, {title}', fontsize=14)
+        
+    #     failed.plot(ax = fig, column = 'r2', figsize = (25,20), color = 'red')
+
     return regs_all, regs_top
+
+def group_countries(df, var, title, pval = 0.05, plot = True, save = True):
+    grouped_df = pd.DataFrame() 
+    
+    for r in range(0, len(df)): 
+        try: 
+            if var in df.loc[r, 'inputs']: 
+                new =  pd.DataFrame(df.loc[r, :]).T
+                grouped_df = pd.concat([grouped_df, new])
+        
+        except: pass
+    
+        if df.loc[r, 'r2'] < 0: 
+            df.loc[r, 'r2'] = 0
+            
+    if plot == True: 
+        
+        grouped_df['r2'] = pd.to_numeric(grouped_df['r2'], errors = 'coerce')
+        
+        world = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))[['pop_est','iso_a3', 'gdp_md_est', 'geometry']]
+        world.columns = ['pop', 'Country Code', 'gdp', 'geometry']
+        
+        pct_hydro = pd.read_csv("Other_data/wb_hydro%.csv")[['Country Name', 'Country Code', '2015']]
+        
+        hydro_gdf = pd.merge(world, pct_hydro, on = 'Country Code')
+        
+        
+        ## now let's plot the performance of our regression analysis 
+        merged_gdf = hydro_gdf.merge(grouped_df, right_on = 'country', left_on = 'Country Name', how = 'outer')
+        
+        fig = merged_gdf.plot(column = 'r2', missing_kwds={'color':'lightgrey'}, 
+                        figsize = (25, 20), cmap = 'YlGnBu', \
+                        vmin = 0, vmax = 1, legend = True)
+        fig.set_title(f'r2 for Generation Index, {title}', fontsize=14)
+        
+        if save == True: 
+            plt.savefig(f"Results_all/Figures/{title}.png")
+
+    return grouped_df 
+
+def run_groupings(df, hybas, plot = True):     
+    snow_avg = group_countries(df, 'Snow', title = f'Snow, {hybas}')
+    temp_avg = group_countries(df, 'LST', title = f'LST, {hybas}')
+    evi_avg = group_countries(df, 'CMG', title = f'CMG, {hybas}')
+    precip_avg =  group_countries(df, 'precip', title = f'Precip, {hybas}')
+    
+    summ_avg =  group_countries(df, 'summ', title = f'Summer Inputs, {hybas}') 
+    spri_avg =  group_countries(df, 'spri', title = f'Spring Inputs, {hybas}') 
+    wint_avg =  group_countries(df, 'wint', title = f'Winter Inputs, {hybas}') 
+    fall_avg =  group_countries(df, 'fall', title = f'Fall Inputs, {hybas}') 
+
+def clean_pvals(df1, sig_thresh = 0.05): 
+    df = df1.copy()
+    df['pval'] = df['pval'].astype(str)
+    df['pval'] = df['pval'].str.replace('[', '')
+    df['pval'] = df['pval'].str.replace(']', '')
+    df['pval'] = df['pval'].str.split(", ")
+    
+    df.pval.fillna(0, inplace = True)
+    new_df = pd.DataFrame()
+    
+    ## definitely not the most elegant way to do this... 
+    ## do not shame me dear reader, pity me instead! 
+    for r in range(0, len(df)): 
+        try: 
+            pvals = df.loc[r, 'pval'][1:]
+            pvals = pd.to_numeric(pvals, errors = 'coerce')
+    
+            if len(pvals) > 0: 
+                if all(i <= sig_thresh for i in pvals):
+                    print("True") 
+                    new = pd.DataFrame(df.loc[r,:]).T
+                    new_df = pd.concat([new_df, new])
+        except: pass
+    
+    return new_df   
+
+def read_in_data(c, hybas, hybas2, snow = True):
+
+    try: 
+        new = pd.read_csv(f"Results_all/Inputs_{hybas}/{c}_input_data.csv").iloc[:,1:]
+        try: 
+            evi = pd.read_csv(f"Veg_indices/{c}_evi_data_country.csv")
+            evi['year'] = pd.to_datetime(evi['time']).dt.year
+            new = new.merge(evi[['EVI', 'year']], on = 'year')
+        except: pass
+    
+        if snow == False:
+            new = new.loc[:,~new.columns.str.contains('Snow', case=False)] 
+                     
+    except: 
+        try:
+            new = pd.read_csv(f"Results_all/Inputs_{hybas}/{c}_input_data_{hybas}.csv").iloc[:,1:]
+            try: 
+                evi = pd.read_csv(f"Veg_indices/{c}_evi_data_country.csv")
+                evi['year'] = pd.to_datetime(evi['time']).dt.year
+                new = new.merge(evi[['EVI', 'year']], on = 'year')
+            except: pass
+        
+            if snow == False:
+                new = new.loc[:,~new.columns.str.contains('Snow', case=False)] 
+             
+        except:
+            try:
+                new = pd.read_csv(f"Results_all/Inputs_{hybas}/{c}_input_data_{hybas2}.csv").iloc[:,1:]
+                try: 
+                    evi = pd.read_csv(f"Veg_indices/{c}_evi_data_country.csv")
+                    evi['year'] = pd.to_datetime(evi['time']).dt.year
+                    new = new.merge(evi[['EVI', 'year']], on = 'year')
+                except: pass
+            
+                if snow == False:
+                    new = new.loc[:,~new.columns.str.contains('Snow', case=False)] 
+            except: new = 'failed'
+    return new 
