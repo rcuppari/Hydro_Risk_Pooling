@@ -18,14 +18,16 @@ from analysis_plotting_funcs1 import id_hydro_countries
 ## it includes a few variations on the figure as well 
 ###############################################################################
 
-name = 'cap_fac99_loading' ## suffix to read in files 
+name = 'cap_fac995_final'
 strike_val = 20
-var_cap = 1
+var_cap = 0.5
 cap_fac = False
 LCOE = 0.044 ## per kWh
 
 ## read in countries that are in the pool
 payouts = pd.read_csv(f"Results_all/predicted_payouts_{name}.csv").iloc[:,1:]
+## exclude countries with no payouts
+payouts = payouts.loc[:, payouts.any()]
 
 ################# starting plotting parameters
 labelsize = 15
@@ -148,9 +150,9 @@ for i in combs:
     var_val = np.percentile(sum_val, var_cap)
 
     if len(i) == 1: 
-        var_i = (sum_val.mean() - np.percentile(sum_val, 5))[0]
+        var_i = (sum_val.mean() - np.percentile(sum_val, var_cap))[0]
     else: 
-        var_i = (sum_val.mean() - np.percentile(sum_val, 5))
+        var_i = (sum_val.mean() - np.percentile(sum_val, var_cap))
     group_vals.append(var_i)
     
     vals = 0
@@ -266,7 +268,7 @@ rects1 = ax.bar(vals_by_group_size.index, vals_by_group_size['cv'],
                 width = width, label = 'Coefficient of Variation')
 ax.set_ylabel("Coefficient of Variation")
 ax.set_xlabel("Number Pool Participants")
-ax.set_xticks(np.arange(1,16), np.arange(1,16))
+ax.set_xticks(np.arange(1,15), np.arange(1,15))
 
 ax.set_yticks(np.arange(0,2.5, 0.5), np.arange(0, 2.5, 0.5))
 ## have mean separately as line
@@ -290,33 +292,33 @@ ax1.set_ylabel("Savings ($M)")
 ax1.set_yticks([0, 2*pow(10,8), 4*pow(10,8), 6*pow(10,8), 8*pow(10,8), \
                 10*pow(10,8), 12*pow(10,8)],
                ['0', '200', '400', '600', '800', '1000', '1200'])
-ax1.set_xticks(np.arange(0,16), np.arange(0,16))
+ax1.set_xticks(np.arange(0,15), np.arange(0,15))
 
-ax.set_xlim(1, 16)
-ax2.set_xlim(1, 16)
-ax1.set_xlim(1, 16)
+ax.set_xlim(1, 15)
+ax2.set_xlim(1, 15)
+ax1.set_xlim(1, 15)
 
 ################# CV means single panel 
 
 fig, ax1 = plt.subplots()
 
 # Primary axis (left)
-rects1 = ax1.bar(vals_by_group_size.index[:-1], vals_by_group_size['cv'][:-1], 
+rects1 = ax1.bar(vals_by_group_size.index, vals_by_group_size['cv'], 
                  color='orange', alpha=0.8, label='Coefficient of Variation', zorder=1)
 ax1.set_xlabel("Number Pool Participants")
-ax1.set_xticks(np.arange(1, 18), np.arange(0, 17))
+ax1.set_xticks(np.arange(1, 17), np.arange(0, 16))
 ax1.set_yticks(np.arange(0, 2.5, 0.5), np.arange(0, 2.5, 0.5))
-ax1.set_xlim(1, 17.5)
+ax1.set_xlim(1, 16.5)
 ax1.yaxis.tick_right()
 
 # Secondary axis (right)
 ax2 = ax1.twinx()
-lns = ax2.plot(vals_by_group_size.index[:-1], vals_by_group_size['diff'][:-1], 
+lns = ax2.plot(vals_by_group_size.index, vals_by_group_size['diff'], 
                color='purple', linewidth=4, alpha=0.8, label='Reduction in VaR', zorder=2)
 ax2.set_yticks([0, 2*pow(10,8), 4*pow(10,8), 6*pow(10,8), 8*pow(10,8), \
                 10*pow(10,8), 12*pow(10,8), 14*pow(10,8), 16*pow(10,8)],
                ['0', '200', '400', '600', '800', '1000', '1200', '1400', '1600'])
-ax2.set_xticks(np.arange(2, 18), np.arange(2, 18))
+ax2.set_xticks(np.arange(2, 17), np.arange(2, 17))
 
 
 ## swap ticks and corresponding labels 
