@@ -199,26 +199,6 @@ def analysis_and_plot(hybas, hybas2, countries, gen_data, cap_fac,
                       title = '', plot_hydro = False,                       
                       pvals_all = False, snow = True, detrending = True, 
                       csv = False, num = 5): 
-#    countries = id_hydro_countries(pct_gen = 25, year = 2015, cap_fac = cap_fac)
-
-#    gen_data = countries.T
-#    gen_data.reset_index(inplace = True)
-    ## drop the rows with the column names 
-#    gen_data.columns = gen_data.iloc[0,:]
-#    gen_data = gen_data.iloc[1:,:]
-#    gen_data = gen_data.rename(columns = {'Country':'year'})
-    
-    ## if there is no data (or data is equal to 0), drop 
-    ## nans will be dropped too 
-#    for c in gen_data.columns: 
-#        gen_data.loc[:,c] = pd.to_numeric(gen_data.loc[:,c], errors = 'coerce')
-    
-#    gen_data = gen_data[(gen_data['year'] > 2000) & (gen_data['year'] < 2021)]
-#    gen_data['year'] = gen_data['year'].apply(np.int64)
-    
-#    if detrending == True:  
-#        gen_data, year_pred = detrend(gen_data)
-        
         
     ## read in processed geospatial data -- now aggregated and put into csv format
     ## don't need to merge with outcome data since that is done within the regs function
