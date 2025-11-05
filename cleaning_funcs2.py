@@ -7,8 +7,6 @@ Created on Wed Oct 19 12:53:48 2022
 ## good resources: https://joehamman.com/2013/10/12/plotting-netCDF-data-with-Python/
 ## https://neetinayak.medium.com/combine-many-netcdf-files-into-a-single-file-with-python-469ba476fc14
 ## plotting: https://www.python-graph-gallery.com/map/
-import xarray
-import os 
 import geopandas as gpd
 from shapely.geometry import mapping
 import glob 
@@ -20,8 +18,15 @@ from itertools import chain, combinations
 import statsmodels.api as sm
 from sklearn.model_selection import train_test_split as tts
 import gc 
-import shapely 
-
+from sklearn.model_selection import LeaveOneOut
+from sklearn.model_selection import cross_val_score
+from statsmodels.stats.diagnostic import het_white
+from statsmodels.stats.diagnostic import het_breuschpagan
+from scipy.stats import shapiro
+from scipy.stats import normaltest
+from scipy.stats import anderson
+from sklearn.linear_model import LinearRegression
+from permetrics import RegressionMetric
    
 def id_hydro_countries(pct_gen = 90, year = 2015, cap_fac = False, capacity = False):
     wb_hydro = pd.read_csv("Other_data/wb_hydro%.csv")
@@ -31,7 +36,7 @@ def id_hydro_countries(pct_gen = 90, year = 2015, cap_fac = False, capacity = Fa
     countries = countries.merge(country_conversion, on = 'Country Name')    
     countries = countries.rename(columns={'EIA Name':'Country'})
 
-    gen_data = pd.read_csv("Other_data/eia_hydropower_data.csv")
+    gen_data = pd.read_csv("Other_data/eia_hydropower_data2.csv")
     ## remove spaces from gen data country names to make consistent
     gen_data.iloc[:,0] = gen_data.iloc[:,0].str.lstrip()
     gen_data = gen_data.rename(columns = {'hydroelectricity net generation (billion kWh)': 'Country'})
@@ -45,39 +50,28 @@ def id_hydro_countries(pct_gen = 90, year = 2015, cap_fac = False, capacity = Fa
         return gen_data3
     
     else: 
-        cap_data = pd.read_csv("Other_data/IRENA_global_hydro_stats2.csv", skiprows = 7)
-        cap_data.fillna(method='ffill', inplace = True)
-        cap_data.iloc[:,3:] = cap_data.iloc[:, 3:].applymap(lambda x: str(x).replace(",", ""))
-        cap_data.iloc[:,3:] = cap_data.iloc[:, 3:].applymap(lambda x: str(x).replace(" ", ""))
-        cap_data.iloc[:,3:] = cap_data.iloc[:, 3:].applymap(lambda x: str(x).replace("inf", "NaN"))
-
-        ## IRENA is missing the generation data for 2020, which is weird, so will use EIA here 
-
+        cap_data = pd.read_csv("Other_data/IRENA_global_hydro_stats_new.csv")
+        cap_data = cap_data.rename(columns = {'Unnamed: 0':'Country/area'})
         ## get right country names
         cap_data = cap_data.merge(countries, left_on = 'Country/area', right_on = 'Country')
         
         ## convert cap_data to kW to match gen data
         ## note: billion kWh = 1,000,000,000 = 1M MWh = 1000 GWh
-        cap_data = cap_data[cap_data['Indicator'] == 'Electricity capacity (MW)']
-#        cap_data = cap_data.loc[cap_data['Country/area'].isin(gen_data2['Country']),:]
         if capacity == True: 
             return cap_data
         
         else:
             cap_factor_df = pd.DataFrame(index = gen_data3.iso_a3, 
-                                         columns = cap_data.columns[3:-5])
+                                         columns = cap_data.columns[1:-5])
             
-            for c in cap_data.columns[3:-5]:
+            for c in cap_data.columns[1:-5]:
                 cap_data.loc[:,c] = pd.to_numeric(cap_data.loc[:,c], errors = 'coerce')
                 ## put capacity into B kWh from MW, to match the generation data 
                 cap_data.loc[:,c] = (cap_data.loc[:, c]/1000)/1000*8760 
-                #cap_data.loc[:,c] = cap_data[c].replace(0, 0.01)
             
                 gen_data3.loc[:,c] = pd.to_numeric(gen_data3.loc[:,c], errors = 'coerce')
-                #gen_data.loc[:,c] = gen_data[c].replace(0, 0.01)
-    
+            
                 for r in gen_data3.iso_a3:
-     #               print(r)
                     country_gen = gen_data3[gen_data3['iso_a3'] == r][c]
                     country_cap = cap_data[cap_data['iso_a3'] == r][c]
                     
@@ -101,6 +95,81 @@ def id_hydro_countries(pct_gen = 90, year = 2015, cap_fac = False, capacity = Fa
             
             return cap_df
 
+## c is country
+def index_vetting(c, x, y, random_state):
+    
+    #define cross-validation method to use
+    cv = LeaveOneOut()
+    #build multiple linear regression model
+    loo_model = LinearRegression()
+    
+    X_train, X_test, y_train, y_test = tts(x, y, test_size = .2,\
+                           random_state = random_state)
+    model = sm.OLS(y_train, X_train).fit()
+
+    ## check the fit on test data 
+    predicted = model.predict(X_test)
+    pred_r2 = (predicted.corr(y_test)**2)
+
+    ## the values we will want to output to track the index/index performance
+    inputs = list(x.columns)
+    coefs = list(model.params)
+    pval = list(model.pvalues)
+    r_all = model.predict(x).corr(y)
+    r2_all = r_all**2
+
+    #use LOOCV to evaluate model
+    scores = cross_val_score(loo_model, x, y, scoring='neg_mean_absolute_error',
+                              cv=cv, n_jobs=-1)
+
+    ## also make sure to evaluate normality and hetereoscedasticity 
+    white_test = het_white(model.resid, model.model.exog)
+    bp_test = het_breuschpagan(model.resid, model.model.exog)
+    shap, shap_p = shapiro(y)
+    dagpear_stat, dagpear_p = normaltest(y)
+
+    nnse = RegressionMetric(y.values, model.predict(x).values).get_metrics_by_list_names(["NNSE"])['NNSE']
+
+    and_darling = anderson(y)
+    if and_darling[0] < and_darling[1][-1]: 
+        and_darl_sig_1pct = 'normal at p 0.01'
+    else: and_darl_sig_1pct = 'not-normal at p 0.01'
+
+    mae = abs(scores).mean()
+
+    # ## print results and save to df
+    # print(f"{c} MAE: {mae}")
+    # print(f"{c} white test p-value: {white_test[1]}")
+    # print(f"{c} bp p-value: {bp_test[1]}")
+    # print(f"{c} d'agostino and pearson's test p-value: {dagpear_p}")
+    # print(f"{c} shapiro p-value: {shap_p}")
+    # print(f"{c} anderson-darling result: {and_darl_sig_1pct}")
+    
+    ## saving this snippet of code in case we ever want to break down the 
+    ## Anderson-Darling values more
+    # ad_result = anderson(y, dist='norm')
+    
+    # print(f"Anderson-Darling Statistic (A²): {ad_result.statistic:.4f}")
+    
+    # print("\nSignificance Level (%) | Critical Value | Test Decision")
+    # print("-" * 50)
+    # for significance, critical_value in zip(ad_result.significance_level, ad_result.critical_values):
+    #     decision = "Reject H₀" if ad_result.statistic > critical_value else "Fail to Reject H₀"
+    #     print(f"{significance:>21}% | {critical_value:>14.4f} | {decision}")
+
+
+    validation_df = pd.DataFrame([mae, nnse, 
+                             white_test[1], bp_test[1], 
+                             shap_p, dagpear_p, and_darl_sig_1pct])
+
+    new = {'Country Name': c, \
+            'r2': r_all, 'inputs':[inputs], 'coefs':[coefs], \
+            'df':[['4']], 'pval':[pval], 
+            'r2_train': model.rsquared_adj, 'test_r2': pred_r2} 
+    new = pd.DataFrame(new)
+
+    
+    return new, validation_df
 
 def get_dfs(country, country_geom, ds, hybas = 'country'):
     ## need to import 
@@ -149,8 +218,6 @@ def remove_lin_trend(input_data):  ## input data should have the year
     
     est_year = sm.OLS(y, X)
     est_year2 = est_year.fit()
-#    print(est_year2.summary())
-#    print(est_year2.rsquared)
 
     if est_year2.pvalues[1] < .05: 
         year_pred = est_year2.predict(X)
@@ -224,7 +291,7 @@ def agg_data(geom, ds, hybas, var, time): ## geom is the bounds, variable is a s
         
         if (var == 'Snow_Cover_Monthly_CMG') | (var == 'dmsp') | (var == 'CMG 0.05 Deg Monthly EVI') | (var == 'CMG 0.05 Deg Monthly NDVI'):  
             new_var['time'] = time
-            #print(new_var)
+
             ## make into gpd df
             new_var3 = gpd.GeoDataFrame(
                 new_var[['time', var]], 
@@ -328,15 +395,11 @@ def clean_modis_snow(geom, file_header, hybas = 'country', country = '', subbasi
                            hybas = hybas, time = time)    
                     
         
-#        year1 = year ## keep track of last year 
         new_df = pd.concat([new_df, new_var3])
         
         year1 = year
-    
-    ## coordinates are for some reason flipped...    
-#    new_df['geometry'] = gpd.GeoSeries(new_df['geometry']).map(lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
-        
-    return new_df## this will be a geodataframe with geometry and will hold the whole modis timeseries       
+           
+    return new_df ## this will be a geodataframe with geometry and will hold the whole modis timeseries       
 
 def clean_modis_evi(geom, file_header, hybas = 'country'): ## need country boundary geometry
     ## need to have all MODIS files downloaded in directory
@@ -385,9 +448,6 @@ def clean_modis_evi(geom, file_header, hybas = 'country'): ## need country bound
              ndvi_df = pd.concat([ndvi_df, new_ndvi3])
              gc.collect()
             # print('ndvi saved')
-        
-            ## coordinates are for some reason flipped... 
-    #     new_df['geometry'] = gpd.GeoSeries(new_df['geometry']).map(lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
         
          except: print('failed to read ' + str(name))
          
@@ -636,6 +696,7 @@ def regs(outcome, input_gdf, country, detrending = False,
     else: print(country + ' insufficient data')   
     
     return regression_output, reg_top
+
 
 ######################### save outputs! ##############################
 def write_dict(dict, name): 
